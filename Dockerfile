@@ -7,6 +7,9 @@ COPY backend/package.json ./backend/
 COPY frontend/package.json ./frontend/
 RUN npm install
 
+# Generate Prisma client before build
+RUN cd backend && npx prisma generate
+
 # Copy source and build
 COPY . .
 RUN npm run build
