@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Factory {
+  id           Int             @id @default(autoincrement())
+  code         String          @unique
+  name         String
+  totalAreaSqm Float?
+  zones        Zone[]
+  changeLogs   AreaChangeLog[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+model Zone {
+  id               Int             @id @default(autoincrement())
+  factoryId        Int
+  factory          Factory         @relation(fields: [factoryId], references: [id])
+  name             String
+  availableAreaSqm Float
+  usageType        String?
+  dimensions       String?
+  isActive         Boolean         @default(true)
+  assignments      AreaAssignment[]
+  changeLogs       AreaChangeLog[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([factoryId, name])
+}
+
+model AreaChangeLog {
+  id         Int      @id @default(autoincrement())
+  entityType String
+  entityId   Int
+  fieldName  String
+  oldValue   String?
+  newValue   String?
+  changedBy  String?
+  changedAt  DateTime @default(now())
+  factory    Factory? @relation(fields: [factoryId], references: [id])
+  factoryId  Int?
+  zone       Zone?    @relation(fields: [zoneId], references: [id])
+  zoneId     Int?
+}
+
+model Project {
+  id          Int              @id @default(autoincrement())
+  projectNo   String           @unique
+  clientName  String?
+  description String?
+  status      String           @default("active")
+  assignments AreaAssignment[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model AreaAssignment {
+  id              Int      @id @default(autoincrement())
+  projectId       Int
+  project         Project  @relation(fields: [projectId], references: [id])
+  zoneId          Int
+  zone            Zone     @relation(fields: [zoneId], references: [id])
+  startDate       DateTime
+  endDate         DateTime
+  requiredAreaSqm Float
+  status          String   @default("confirmed")
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
