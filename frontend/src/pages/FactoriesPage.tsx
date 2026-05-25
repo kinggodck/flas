@@ -122,11 +122,28 @@ export default function FactoriesPage() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [factoryForm, setFactoryForm] = useState<{ open: boolean; factory?: Factory }>({ open: false });
   const [zoneForm, setZoneForm] = useState<{ open: boolean; factoryId: number; zone?: Zone }>({ open: false, factoryId: 0 });
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
 
   const delFactory = useMutation({ mutationFn: deleteFactory, onSuccess: () => qc.invalidateQueries({ queryKey: ['factories'] }) });
   const delZone = useMutation({ mutationFn: deleteZone, onSuccess: () => qc.invalidateQueries({ queryKey: ['factories'] }) });
 
   const toggle = (id: number) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const handleSyncSheets = async () => {
+    setSyncing(true);
+    setSyncMsg('');
+    try {
+      const res = await fetch('/api/admin/sync-sheets', { method: 'POST' });
+      const data = await res.json() as { source: string; factories: number; zones: number };
+      setSyncMsg(`동기화 완료 (출처: ${data.source === 'sheets' ? 'Google Sheets' : '내장 데이터'}, ${data.factories}개 공장, ${data.zones}개 구역)`);
+      qc.invalidateQueries({ queryKey: ['factories'] });
+    } catch {
+      setSyncMsg('동기화 실패');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   if (isLoading) return <p className="text-gray-400 mt-10 text-center">불러오는 중…</p>;
 
@@ -134,9 +151,19 @@ export default function FactoriesPage() {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-xl font-bold text-gray-800">공장·구역 관리</h1>
-        <button onClick={() => setFactoryForm({ open: true })} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
-          + 공장 추가
-        </button>
+        <div className="flex items-center gap-3">
+          {syncMsg && <span className="text-xs text-gray-500">{syncMsg}</span>}
+          <button
+            onClick={handleSyncSheets}
+            disabled={syncing}
+            className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {syncing ? '동기화 중…' : '구글 시트 동기화'}
+          </button>
+          <button onClick={() => setFactoryForm({ open: true })} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
+            + 공장 추가
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
