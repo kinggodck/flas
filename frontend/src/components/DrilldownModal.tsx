@@ -83,7 +83,7 @@ export default function DrilldownModal({ factoryId, factoryName, year, month, on
                       domain={[0, (max: number) => Math.max(max, 110)]}
                     />
                     <Tooltip
-                      formatter={(value: number, name: string) => [`${value.toFixed(1)}%`, name]}
+                      formatter={(value, name) => [typeof value === 'number' ? `${value.toFixed(1)}%` : String(value), String(name)]}
                     />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <ReferenceLine y={100} stroke="#ef4444" strokeDasharray="4 2" label={{ value: '100%', fill: '#ef4444', fontSize: 10 }} />

@@ -137,6 +137,11 @@ export interface GanttZone {
 export const getGanttData = (factoryId: number, start: string, end: string) =>
   api.get<GanttZone[]>(`/gantt/factory/${factoryId}`, { params: { start, end } }).then((r) => r.data);
 
+export interface SimPreview {
+  assignmentId: number;
+  targetZoneId: number;
+}
+
 // ── Replacement ────────────────────────────────────────
 export interface ReplacementSuggestion {
   zone: { id: number; name: string; availableAreaSqm: number };

@@ -135,7 +135,7 @@ export default function GanttPage() {
             const zone = ganttData.find((z) => z.zone.id === zoneId);
             setPopup({ a, zoneId, zoneName: zone?.zone.name ?? '', x, y });
           }}
-          onZoneClick={(zoneId, zoneName, maxLoadRate) => {
+          onZoneClick={(zoneId, zoneName) => {
             // Find any assignment in this zone to open replacement modal
             const zone = ganttData.find((z) => z.zone.id === zoneId);
             if (zone && zone.assignments.length > 0) {

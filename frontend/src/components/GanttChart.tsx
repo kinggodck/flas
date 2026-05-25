@@ -1,15 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
-import type { GanttZone, GanttAssignment, DayLoad } from '../api/client';
+import type { GanttZone, GanttAssignment, DayLoad, SimPreview } from '../api/client';
 
 const DAY_WIDTH = 8;   // px per day
 const ROW_HEIGHT = 52; // px per zone row
 const LABEL_WIDTH = 160; // px for zone label column
 
 // ── helpers ────────────────────────────────────────────────────
-function dateStr(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
-
 function daysBetween(a: Date, b: Date) {
   return Math.round((b.getTime() - a.getTime()) / 86400000);
 }
@@ -99,11 +94,6 @@ function AssignmentBar({ a, startOffset, duration, colorIdx, rowHeight, onClick,
 }
 
 // ── main component ─────────────────────────────────────────────
-export interface SimPreview {
-  assignmentId: number;
-  targetZoneId: number;
-}
-
 interface GanttChartProps {
   zones: GanttZone[];
   start: Date;
@@ -192,8 +182,6 @@ export default function GanttChart({
               {z.assignments.map((a) => {
                 const isPreview = simPreview?.assignmentId === a.id;
                 const effectiveZoneId = isPreview ? simPreview!.targetZoneId : z.zone.id;
-                // If simPreview targets THIS zone but the assignment is FROM another zone, show ghost
-                const isGhost = simPreview?.targetZoneId === z.zone.id && !z.assignments.find((x) => x.id === simPreview.assignmentId);
 
                 if (isPreview && effectiveZoneId !== z.zone.id) return null; // hide from original zone
 

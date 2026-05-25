@@ -14,7 +14,7 @@ interface Props {
 
 export default function ReplacementModal({
   assignment,
-  currentZoneId,
+  currentZoneId: _currentZoneId,
   currentZoneName,
   onClose,
   onSimPreview,
