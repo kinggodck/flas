@@ -1,7 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from '../lib/prisma';
+
 import { validateAssignment } from './conflictValidator';
 
-const prisma = new PrismaClient();
+
 
 export interface ReplacementSuggestion {
   zone: { id: number; name: string; availableAreaSqm: number };

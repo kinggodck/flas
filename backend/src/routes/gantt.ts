@@ -1,9 +1,10 @@
+import prisma from '../lib/prisma';
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+
 import { getLoadRateByPeriod } from '../services/loadCalculator';
 
 const router = Router();
-const prisma = new PrismaClient();
+
 
 // GET /api/gantt/factory/:factoryId?start=&end=
 router.get('/factory/:factoryId', async (req, res, next) => {

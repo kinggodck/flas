@@ -1,10 +1,11 @@
+import prisma from '../lib/prisma';
 import { Router } from 'express';
 import { getLoadRateByPeriod } from '../services/loadCalculator';
 import { suggestReplacements } from '../services/replacementSuggester';
-import { PrismaClient } from '@prisma/client';
+
 
 const router = Router();
-const prisma = new PrismaClient();
+
 
 // POST /api/load/check — 기간·구역 부하율 계산
 router.post('/check', async (req, res, next) => {

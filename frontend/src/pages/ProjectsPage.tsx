@@ -195,25 +195,42 @@ function ProjectForm({ project, onClose }: ProjectFormProps) {
   const [no, setNo] = useState(project?.projectNo ?? '');
   const [client, setClient] = useState(project?.clientName ?? '');
   const [desc, setDesc] = useState(project?.description ?? '');
+  const [error, setError] = useState('');
 
-  const createMut = useMutation({ mutationFn: () => createProject({ projectNo: no, clientName: client || undefined, description: desc || undefined }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); onClose(); } });
-  const updateMut = useMutation({ mutationFn: () => updateProject(project!.id, { clientName: client || undefined, description: desc || undefined }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); onClose(); } });
+  const onError = (e: unknown) => {
+    const msg = axios.isAxiosError(e)
+      ? (e.response?.data as { error?: string })?.error ?? e.message
+      : '저장 실패';
+    setError(msg.includes('Unique') || msg.includes('unique') ? '이미 존재하는 프로젝트 번호입니다' : `오류: ${msg}`);
+  };
 
-  const submit = () => project ? updateMut.mutate() : createMut.mutate();
+  const createMut = useMutation({
+    mutationFn: () => createProject({ projectNo: no, clientName: client || undefined, description: desc || undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); onClose(); },
+    onError,
+  });
+  const updateMut = useMutation({
+    mutationFn: () => updateProject(project!.id, { clientName: client || undefined, description: desc || undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); onClose(); },
+    onError,
+  });
+
+  const submit = () => { setError(''); project ? updateMut.mutate() : createMut.mutate(); };
   const isPending = createMut.isPending || updateMut.isPending;
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 w-96 shadow-xl">
         <h3 className="font-semibold text-base mb-4">{project ? '프로젝트 편집' : '프로젝트 등록'}</h3>
+        {error && <p className="text-red-500 text-sm mb-3 bg-red-50 rounded px-3 py-2">{error}</p>}
         <div className="space-y-3">
-          <input disabled={!!project} className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm disabled:bg-gray-50" placeholder="프로젝트 번호" value={no} onChange={(e) => setNo(e.target.value)} />
+          <input disabled={!!project} className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm disabled:bg-gray-50" placeholder="프로젝트 번호 *" value={no} onChange={(e) => setNo(e.target.value)} />
           <input className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" placeholder="고객사명" value={client} onChange={(e) => setClient(e.target.value)} />
           <textarea className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" rows={2} placeholder="설명 (선택)" value={desc} onChange={(e) => setDesc(e.target.value)} />
         </div>
         <div className="flex gap-2 justify-end mt-4">
           <button onClick={onClose} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md">취소</button>
-          <button onClick={submit} disabled={!no || isPending} className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
+          <button onClick={submit} disabled={!no.trim() || isPending} className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
             {isPending ? '저장 중…' : '저장'}
           </button>
         </div>

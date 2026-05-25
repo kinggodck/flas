@@ -1,9 +1,10 @@
+import prisma from '../lib/prisma';
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+
 import { getLoadRateByPeriod } from '../services/loadCalculator';
 
 const router = Router();
-const prisma = new PrismaClient();
+
 
 function utcDate(year: number, month: number, day: number): Date {
   return new Date(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);

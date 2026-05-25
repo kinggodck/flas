@@ -1,9 +1,10 @@
+import prisma from '../lib/prisma';
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+
 import { validateAssignment } from '../services/conflictValidator';
 
 const router = Router();
-const prisma = new PrismaClient();
+
 
 // PUT /api/assignments/:id
 router.put('/:id', async (req, res, next) => {

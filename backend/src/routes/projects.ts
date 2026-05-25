@@ -1,9 +1,10 @@
+import prisma from '../lib/prisma';
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+
 import { validateAssignment } from '../services/conflictValidator';
 
 const router = Router();
-const prisma = new PrismaClient();
+
 
 // GET /api/projects
 router.get('/', async (_req, res, next) => {

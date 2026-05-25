@@ -1,10 +1,11 @@
+import prisma from '../lib/prisma';
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 
 const router = Router();
-const prisma = new PrismaClient();
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 // GET /api/factories
