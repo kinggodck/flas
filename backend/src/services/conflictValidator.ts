@@ -42,7 +42,7 @@ export async function validateAssignment(
   while (cur <= endDate) {
     const existingLoad = existing
       .filter((a) => a.startDate <= cur && a.endDate >= cur)
-      .reduce((sum, a) => sum + Number(a.requiredAreaSqm), 0);
+      .reduce((sum: number, a) => sum + Number(a.requiredAreaSqm), 0);
     const total = existingLoad + requiredAreaSqm;
     const loadRate = availableArea > 0 ? (total / availableArea) * 100 : 0;
 

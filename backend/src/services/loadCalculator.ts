@@ -45,7 +45,7 @@ export async function getLoadRateByPeriod(
     const dateStr = cur.toISOString().slice(0, 10);
     const occupied = assignments
       .filter((a) => a.startDate <= cur && a.endDate >= cur)
-      .reduce((sum, a) => sum + Number(a.requiredAreaSqm), 0);
+      .reduce((sum: number, a) => sum + Number(a.requiredAreaSqm), 0);
     days.push({
       date: dateStr,
       occupiedArea: occupied,
