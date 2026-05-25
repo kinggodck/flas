@@ -9,7 +9,7 @@ const prisma = new PrismaClient();
 router.put('/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const { zoneId, startDate, endDate, requiredAreaSqm, notes, status, force } = req.body;
+    const { zoneId, startDate, endDate, requiredAreaSqm, widthM, heightM, notes, status, force } = req.body;
 
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -23,7 +23,12 @@ router.put('/:id', async (req, res, next) => {
 
     const assignment = await prisma.areaAssignment.update({
       where: { id },
-      data: { zoneId: Number(zoneId), startDate: start, endDate: end, requiredAreaSqm: area, notes, status },
+      data: {
+        zoneId: Number(zoneId), startDate: start, endDate: end, requiredAreaSqm: area,
+        widthM: widthM !== undefined ? (widthM ? Number(widthM) : null) : undefined,
+        heightM: heightM !== undefined ? (heightM ? Number(heightM) : null) : undefined,
+        notes, status,
+      },
       include: { zone: { include: { factory: true } } },
     });
     res.json({ assignment, validation });

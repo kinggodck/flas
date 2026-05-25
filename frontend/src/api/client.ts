@@ -28,6 +28,8 @@ export interface Assignment {
   startDate: string;
   endDate: string;
   requiredAreaSqm: number;
+  widthM: number | null;
+  heightM: number | null;
   status: string;
   notes: string | null;
   zone: Zone & { factory: Factory };
@@ -94,7 +96,7 @@ export const deleteProject = (id: number) => api.delete(`/projects/${id}`);
 // ── Assignments ────────────────────────────────────────
 export const createAssignment = (
   projectId: number,
-  data: { zoneId: number; startDate: string; endDate: string; requiredAreaSqm: number; notes?: string; force?: boolean }
+  data: { zoneId: number; startDate: string; endDate: string; requiredAreaSqm: number; widthM?: number; heightM?: number; notes?: string; force?: boolean }
 ) =>
   api
     .post<{ assignment: Assignment; validation: ValidationResult }>(`/projects/${projectId}/assignments`, data)
@@ -116,6 +118,8 @@ export interface GanttAssignment {
   startDate: string;
   endDate: string;
   requiredAreaSqm: number;
+  widthM: number | null;
+  heightM: number | null;
   status: string;
   notes: string | null;
 }

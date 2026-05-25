@@ -70,25 +70,40 @@ interface AssignmentBarProps {
 
 function AssignmentBar({ a, startOffset, duration, colorIdx, rowHeight, onClick, isSimPreview }: AssignmentBarProps) {
   const left = startOffset * DAY_WIDTH;
-  const width = Math.max(duration * DAY_WIDTH - 2, 4);
+  const barWidth = Math.max(duration * DAY_WIDTH - 2, 4);
   const color = isSimPreview ? '#94a3b8' : barColor(colorIdx);
-  const label = `${a.projectNo}${a.requiredAreaSqm ? ` · ${a.requiredAreaSqm.toLocaleString()}㎡` : ''}`;
+
+  const dimLabel = a.widthM && a.heightM ? `${a.widthM}×${a.heightM}m` : null;
+  const areaLabel = a.requiredAreaSqm ? `${a.requiredAreaSqm.toLocaleString()}㎡` : '';
+  const titleTip = `${a.projectNo}${a.clientName ? ' | ' + a.clientName : ''} | ${dimLabel ? dimLabel + ' = ' : ''}${areaLabel}`;
 
   return (
     <div
-      className="absolute top-1 rounded cursor-pointer select-none overflow-hidden text-white text-xs flex items-center px-1.5 transition-opacity hover:opacity-90"
+      className="absolute top-1 rounded cursor-pointer select-none overflow-hidden text-white text-xs transition-opacity hover:opacity-90"
       style={{
         left,
-        width,
+        width: barWidth,
         height: rowHeight - 8,
         backgroundColor: color,
         opacity: isSimPreview ? 0.6 : 0.85,
         border: isSimPreview ? '2px dashed #64748b' : 'none',
       }}
       onClick={(e) => { e.stopPropagation(); onClick(a, e.clientX, e.clientY); }}
-      title={`${a.projectNo} | ${a.clientName ?? ''} | ${a.requiredAreaSqm.toLocaleString()}㎡`}
+      title={titleTip}
     >
-      <span className="truncate font-medium">{label}</span>
+      {/* 상단: 프로젝트번호 */}
+      <div className="px-1.5 pt-1 font-semibold truncate leading-none">{a.projectNo}</div>
+      {/* 하단: 가로×세로 또는 면적 */}
+      {dimLabel && barWidth > 60 && (
+        <div className="px-1.5 pb-1 text-white/80 truncate leading-none" style={{ fontSize: 10 }}>
+          {dimLabel}={areaLabel}
+        </div>
+      )}
+      {!dimLabel && barWidth > 40 && (
+        <div className="px-1.5 pb-1 text-white/80 truncate leading-none" style={{ fontSize: 10 }}>
+          {areaLabel}
+        </div>
+      )}
     </div>
   );
 }
@@ -160,6 +175,15 @@ export default function GanttChart({
                 )}
               </div>
               <span className="text-xs text-gray-400">{z.zone.availableAreaSqm.toLocaleString()}㎡</span>
+              {/* 면적 점유율 미니 바 */}
+              {z.maxLoadRate > 0 && (
+                <div className="mt-0.5 h-1 bg-gray-100 rounded-full overflow-hidden" style={{ width: LABEL_WIDTH - 24 }}>
+                  <div
+                    className={`h-full rounded-full ${isOverloaded ? 'bg-red-400' : isWarning ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                    style={{ width: `${Math.min(z.maxLoadRate, 100)}%` }}
+                  />
+                </div>
+              )}
             </div>
 
             {/* Timeline area */}

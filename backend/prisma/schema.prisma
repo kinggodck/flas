@@ -70,6 +70,8 @@ model AreaAssignment {
   startDate       DateTime
   endDate         DateTime
   requiredAreaSqm Float
+  widthM          Float?
+  heightM         Float?
   status          String   @default("confirmed")
   notes           String?
   createdAt       DateTime @default(now())

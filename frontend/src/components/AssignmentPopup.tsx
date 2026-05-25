@@ -34,6 +34,9 @@ export default function AssignmentPopup({ assignment: a, zoneName, x, y, onClose
           <div className="flex justify-between"><span className="text-gray-400">구역</span><span>{zoneName}</span></div>
           <div className="flex justify-between"><span className="text-gray-400">기간</span><span>{a.startDate} ~ {a.endDate}</span></div>
           <div className="flex justify-between"><span className="text-gray-400">일수</span><span>{days}일</span></div>
+          {a.widthM && a.heightM && (
+            <div className="flex justify-between"><span className="text-gray-400">치수</span><span>{a.widthM}m × {a.heightM}m</span></div>
+          )}
           <div className="flex justify-between"><span className="text-gray-400">면적</span><span className="font-medium">{a.requiredAreaSqm.toLocaleString()} ㎡</span></div>
           {a.notes && <div className="flex justify-between"><span className="text-gray-400">비고</span><span className="text-right">{a.notes}</span></div>}
         </div>

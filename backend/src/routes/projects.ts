@@ -77,7 +77,7 @@ router.get('/:id/assignments', async (req, res, next) => {
 router.post('/:id/assignments', async (req, res, next) => {
   try {
     const projectId = Number(req.params.id);
-    const { zoneId, startDate, endDate, requiredAreaSqm, notes, force } = req.body;
+    const { zoneId, startDate, endDate, requiredAreaSqm, widthM, heightM, notes, force } = req.body;
 
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -95,7 +95,12 @@ router.post('/:id/assignments', async (req, res, next) => {
     }
 
     const assignment = await prisma.areaAssignment.create({
-      data: { projectId, zoneId: Number(zoneId), startDate: start, endDate: end, requiredAreaSqm: area, notes },
+      data: {
+        projectId, zoneId: Number(zoneId), startDate: start, endDate: end, requiredAreaSqm: area,
+        widthM: widthM ? Number(widthM) : null,
+        heightM: heightM ? Number(heightM) : null,
+        notes,
+      },
       include: { zone: { include: { factory: true } } },
     });
     res.status(201).json({ assignment, validation });

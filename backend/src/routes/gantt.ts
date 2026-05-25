@@ -50,6 +50,8 @@ router.get('/factory/:factoryId', async (req, res, next) => {
             startDate: a.startDate.toISOString().slice(0, 10),
             endDate: a.endDate.toISOString().slice(0, 10),
             requiredAreaSqm: Number(a.requiredAreaSqm),
+            widthM: a.widthM ? Number(a.widthM) : null,
+            heightM: a.heightM ? Number(a.heightM) : null,
             status: a.status,
             notes: a.notes,
           })),

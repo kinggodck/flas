@@ -53,18 +53,32 @@ function AssignmentForm({ projectId, factories, onClose }: AssignmentFormProps) 
   const [zoneId, setZoneId] = useState('');
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
-  const [area, setArea] = useState('');
+  const [width, setWidth] = useState('');
+  const [height, setHeight] = useState('');
   const [notes, setNotes] = useState('');
   const [conflict, setConflict] = useState<ValidationResult | null>(null);
   const [error, setError] = useState('');
 
   const selectedFactory = factories.find((f) => f.id === Number(factoryId));
   const zones = selectedFactory?.zones.filter((z) => z.isActive) ?? [];
+  const selectedZone = zones.find((z) => z.id === Number(zoneId));
+
+  const computedArea = width && height ? Number(width) * Number(height) : 0;
 
   const submit = async (force = false) => {
+    if (!computedArea) return;
     setError('');
     try {
-      await createAssignment(projectId, { zoneId: Number(zoneId), startDate: start, endDate: end, requiredAreaSqm: Number(area), notes: notes || undefined, force });
+      await createAssignment(projectId, {
+        zoneId: Number(zoneId),
+        startDate: start,
+        endDate: end,
+        requiredAreaSqm: computedArea,
+        widthM: Number(width),
+        heightM: Number(height),
+        notes: notes || undefined,
+        force,
+      });
       qc.invalidateQueries({ queryKey: ['projects'] });
       onClose();
     } catch (e) {
@@ -108,15 +122,50 @@ function AssignmentForm({ projectId, factories, onClose }: AssignmentFormProps) 
               <input type="date" className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={end} onChange={(e) => setEnd(e.target.value)} />
             </div>
           </div>
+
+          {/* 가로 × 세로 → 면적 */}
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">필요면적 (㎡)</label>
-            {zoneId && (
-              <p className="text-xs text-gray-400 mb-1">
-                가용: {zones.find((z) => z.id === Number(zoneId))?.availableAreaSqm.toLocaleString()} ㎡
-              </p>
+            <label className="text-xs text-gray-500 mb-1 block">필요 면적 (가로 × 세로)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" min="0" step="0.1"
+                className="flex-1 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                placeholder="가로 (m)"
+                value={width}
+                onChange={(e) => setWidth(e.target.value)}
+              />
+              <span className="text-gray-400 font-bold">×</span>
+              <input
+                type="number" min="0" step="0.1"
+                className="flex-1 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                placeholder="세로 (m)"
+                value={height}
+                onChange={(e) => setHeight(e.target.value)}
+              />
+              <span className="text-gray-400">=</span>
+              <div className="w-24 text-right">
+                <span className={`text-sm font-bold ${computedArea > 0 ? 'text-blue-600' : 'text-gray-300'}`}>
+                  {computedArea > 0 ? `${computedArea.toLocaleString()}㎡` : '—'}
+                </span>
+              </div>
+            </div>
+            {selectedZone && computedArea > 0 && (
+              <div className="mt-1.5 flex items-center gap-2 text-xs">
+                <span className="text-gray-400">가용 {selectedZone.availableAreaSqm.toLocaleString()}㎡ 중</span>
+                <span className={`font-medium ${computedArea > selectedZone.availableAreaSqm ? 'text-red-600' : 'text-green-600'}`}>
+                  {((computedArea / selectedZone.availableAreaSqm) * 100).toFixed(1)}% 점유
+                </span>
+                {/* Mini proportional bar */}
+                <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${computedArea > selectedZone.availableAreaSqm ? 'bg-red-500' : 'bg-green-400'}`}
+                    style={{ width: `${Math.min((computedArea / selectedZone.availableAreaSqm) * 100, 100)}%` }}
+                  />
+                </div>
+              </div>
             )}
-            <input type="number" className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" placeholder="필요 면적 입력" value={area} onChange={(e) => setArea(e.target.value)} />
           </div>
+
           <input className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" placeholder="비고 (선택)" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
 
@@ -124,7 +173,7 @@ function AssignmentForm({ projectId, factories, onClose }: AssignmentFormProps) 
           <button onClick={onClose} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md">취소</button>
           <button
             onClick={() => submit(false)}
-            disabled={!zoneId || !start || !end || !area}
+            disabled={!zoneId || !start || !end || !computedArea}
             className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
             등록
@@ -176,11 +225,12 @@ function ProjectForm({ project, onClose }: ProjectFormProps) {
 // ── 배치 목록 행 ────────────────────────────────────────
 function AssignmentRow({ a, onDelete }: { a: Assignment; onDelete: () => void }) {
   const days = Math.round((new Date(a.endDate).getTime() - new Date(a.startDate).getTime()) / 86400000) + 1;
+  const dimStr = a.widthM && a.heightM ? `${a.widthM}m × ${a.heightM}m = ` : '';
   return (
     <div className="flex items-center justify-between text-xs text-gray-600 bg-gray-50 rounded px-3 py-2 mt-1">
       <span className="font-medium text-gray-800">{a.zone.factory.name} / {a.zone.name}</span>
       <span>{a.startDate.slice(0, 10)} ~ {a.endDate.slice(0, 10)} ({days}일)</span>
-      <span>{a.requiredAreaSqm.toLocaleString()} ㎡ / {a.zone.availableAreaSqm.toLocaleString()} ㎡</span>
+      <span className="text-gray-500">{dimStr}<span className="font-medium text-gray-700">{a.requiredAreaSqm.toLocaleString()}㎡</span></span>
       <LoadBadge pct={(a.requiredAreaSqm / a.zone.availableAreaSqm) * 100} />
       <button onClick={onDelete} className="text-red-400 hover:text-red-600 ml-2">✕</button>
     </div>
