@@ -37,4 +37,4 @@ COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "cd /app/backend && node_modules/.bin/prisma migrate deploy --schema=/app/backend/prisma/schema.prisma && node /app/backend/dist/index.js"]
+CMD ["sh", "-c", "/app/node_modules/.bin/prisma migrate deploy --schema=/app/backend/prisma/schema.prisma && node /app/backend/dist/index.js"]
