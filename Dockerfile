@@ -1,26 +1,30 @@
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 
+# Install OpenSSL required by Prisma
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies
 COPY package.json ./
 COPY backend/package.json ./backend/
 COPY frontend/package.json ./frontend/
 RUN npm install
 
-# Generate Prisma client before build
-RUN cd backend && npx prisma generate
-
-# Copy source and build
+# Copy source (schema must exist before prisma generate in build script)
 COPY . .
+
+# Build (backend script runs: prisma generate && tsc; frontend runs: tsc -b && vite build)
 RUN npm run build
 
 # ── Runtime image ──────────────────────────────────────────────
 FROM node:22-bookworm-slim
 WORKDIR /app
 
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production
 
-# Copy built backend
+# Copy built backend + prisma
 COPY --from=builder /app/backend/dist ./backend/dist
 COPY --from=builder /app/backend/prisma ./backend/prisma
 COPY --from=builder /app/backend/package.json ./backend/package.json
@@ -28,12 +32,9 @@ COPY --from=builder /app/backend/package.json ./backend/package.json
 # Copy built frontend
 COPY --from=builder /app/frontend/dist ./frontend/dist
 
-# Install only production deps for backend
-WORKDIR /app/backend
-RUN npm install --omit=dev
-
-WORKDIR /app
+# Install production deps for backend (includes prisma CLI for migrate)
+COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "cd /app/backend && npx prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "cd /app/backend && node_modules/.bin/prisma migrate deploy --schema=/app/backend/prisma/schema.prisma && node /app/backend/dist/index.js"]
