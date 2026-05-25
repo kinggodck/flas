@@ -37,4 +37,4 @@ COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "for i in 1 2 3 4 5 6 7 8 9 10; do /app/node_modules/.bin/prisma migrate deploy --schema=/app/backend/prisma/schema.prisma && break; echo \"Migration attempt $i failed, retrying in 15s...\"; sleep 15; done && node /app/backend/dist/index.js"]
+CMD ["node", "/app/backend/dist/index.js"]
