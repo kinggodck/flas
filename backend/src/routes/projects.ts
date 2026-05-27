@@ -57,7 +57,9 @@ router.put('/:id', async (req, res, next) => {
 // DELETE /api/projects/:id
 router.delete('/:id', async (req, res, next) => {
   try {
-    await prisma.project.delete({ where: { id: Number(req.params.id) } });
+    const id = Number(req.params.id);
+    await prisma.areaAssignment.deleteMany({ where: { projectId: id } });
+    await prisma.project.delete({ where: { id } });
     res.status(204).send();
   } catch (e) { next(e); }
 });

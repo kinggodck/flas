@@ -263,8 +263,16 @@ export default function ProjectsPage() {
   const [projectForm, setProjectForm] = useState<{ open: boolean; project?: Project }>({ open: false });
   const [assignForm, setAssignForm] = useState<{ open: boolean; projectId: number }>({ open: false, projectId: 0 });
 
-  const delProject = useMutation({ mutationFn: deleteProject, onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
-  const delAssign = useMutation({ mutationFn: deleteAssignment, onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+  const delProject = useMutation({
+    mutationFn: deleteProject,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+    onError: () => alert('삭제 실패. 잠시 후 다시 시도하세요.'),
+  });
+  const delAssign = useMutation({
+    mutationFn: deleteAssignment,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+    onError: () => alert('배치 삭제 실패. 잠시 후 다시 시도하세요.'),
+  });
 
   const toggle = (id: number) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
