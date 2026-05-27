@@ -66,7 +66,6 @@ export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSync
     factoryMap.set(f.code, f);
   }
 
-  // Validate all rows first
   type ValidItem = {
     row: ProjectRow;
     zone: { id: number; name: string; availableAreaSqm: number };
@@ -103,30 +102,37 @@ export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSync
 
   if (valid.length === 0) return { projectsUpserted: 0, assignmentsUpserted: 0, skipped };
 
-  // Parallel project upserts
-  const projects = await Promise.all(valid.map(({ row, description }) =>
-    prisma.project.upsert({
-      where: { projectNo: row.projectCode },
-      update: { clientName: row.client || null, description },
-      create: { projectNo: row.projectCode, clientName: row.client || null, description, status: 'confirmed' },
-    })
-  ));
+  // Query 1: bulk upsert all projects, get IDs back
+  const placeholders = valid.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, 'confirmed', NOW(), NOW())`).join(', ');
+  const values = valid.flatMap(v => [v.row.projectCode, v.row.client || null, v.description]);
+  const upserted = await prisma.$queryRawUnsafe<{ id: number; projectNo: string }[]>(
+    `INSERT INTO "Project" ("projectNo", "clientName", "description", "status", "createdAt", "updatedAt")
+     VALUES ${placeholders}
+     ON CONFLICT ("projectNo") DO UPDATE SET
+       "clientName" = EXCLUDED."clientName",
+       "description" = EXCLUDED."description",
+       "updatedAt" = NOW()
+     RETURNING id, "projectNo"`,
+    ...values
+  );
+  const projectIdMap = new Map(upserted.map(p => [p.projectNo, p.id]));
 
-  // Parallel assignment upserts
-  await Promise.all(valid.map(async ({ zone, startDate, endDate, requiredAreaSqm, widthM, heightM }, idx) => {
-    const projectId = projects[idx].id;
-    const existing = await prisma.areaAssignment.findFirst({ where: { projectId, zoneId: zone.id } });
-    if (existing) {
-      await prisma.areaAssignment.update({
-        where: { id: existing.id },
-        data: { startDate, endDate, requiredAreaSqm, widthM, heightM },
-      });
-    } else {
-      await prisma.areaAssignment.create({
-        data: { projectId, zoneId: zone.id, startDate, endDate, requiredAreaSqm, widthM, heightM, status: 'confirmed' },
-      });
-    }
-  }));
+  // Query 2: delete old assignments for these projects (clean re-sync)
+  await prisma.areaAssignment.deleteMany({ where: { projectId: { in: [...projectIdMap.values()] } } });
+
+  // Query 3: bulk insert all assignments
+  await prisma.areaAssignment.createMany({
+    data: valid.map(v => ({
+      projectId: projectIdMap.get(v.row.projectCode)!,
+      zoneId: v.zone.id,
+      startDate: v.startDate,
+      endDate: v.endDate,
+      requiredAreaSqm: v.requiredAreaSqm,
+      widthM: v.widthM,
+      heightM: v.heightM,
+      status: 'confirmed',
+    })),
+  });
 
   console.log(`sync: ${valid.length} projects, ${valid.length} assignments, ${skipped} skipped`);
   return { projectsUpserted: valid.length, assignmentsUpserted: valid.length, skipped };
