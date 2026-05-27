@@ -10,7 +10,7 @@ function buildDatabaseUrl(): string {
   const sep = cleaned.includes('?') ? '&' : '?';
   // Neon pooler requires pgbouncer=true (disables prepared statements)
   if (cleaned.includes('-pooler.')) {
-    return `${cleaned}${sep}pgbouncer=true&connection_limit=1`;
+    return `${cleaned}${sep}pgbouncer=true&connection_limit=5`;
   }
   return `${cleaned}${sep}connection_limit=5&pool_timeout=30`;
 }

@@ -66,8 +66,16 @@ export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSync
     factoryMap.set(f.code, f);
   }
 
-  let projectsUpserted = 0;
-  let assignmentsUpserted = 0;
+  // Validate all rows first
+  type ValidItem = {
+    row: ProjectRow;
+    zone: { id: number; name: string; availableAreaSqm: number };
+    startDate: Date; endDate: Date;
+    requiredAreaSqm: number; widthM: number; heightM: number;
+    description: string | null;
+  };
+
+  const valid: ValidItem[] = [];
   let skipped = 0;
 
   for (const row of rows) {
@@ -75,39 +83,39 @@ export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSync
 
     const startDate = new Date(startDateStr);
     const endDate = new Date(endDateStr);
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime()) || startDate >= endDate) {
-      skipped++; continue;
-    }
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime()) || startDate >= endDate) { skipped++; continue; }
 
     const factory = factoryMap.get(shopName) ?? factoryMap.get(shopName.replace(/\s*\(.*\)/, '').trim());
-    if (!factory) {
-      console.warn(`Project sync: unknown factory "${shopName}" (${projectCode})`);
-      skipped++; continue;
-    }
+    if (!factory) { console.warn(`unknown factory "${shopName}" (${projectCode})`); skipped++; continue; }
 
     const zone = findZone(factory.zones, zoneName);
-    if (!zone) {
-      console.warn(`Project sync: zone "${zoneName}" not found in ${factory.name} (${projectCode})`);
-      skipped++; continue;
-    }
+    if (!zone) { console.warn(`zone "${zoneName}" not in ${factory.name} (${projectCode})`); skipped++; continue; }
 
-    // Skip rows without valid dimensions
     const dims = dimStr ? parseDimensions(dimStr) : null;
     if (!dims) { skipped++; continue; }
-    const { areaSqm: requiredAreaSqm, widthM, heightM } = dims;
 
-    const description = [division, item, productGroup].filter(Boolean).join(' / ') || null;
-    const project = await prisma.project.upsert({
-      where: { projectNo: projectCode },
-      update: { clientName: client || null, description },
-      create: { projectNo: projectCode, clientName: client || null, description, status: 'confirmed' },
+    valid.push({
+      row, zone, startDate, endDate,
+      requiredAreaSqm: dims.areaSqm, widthM: dims.widthM, heightM: dims.heightM,
+      description: [division, item, productGroup].filter(Boolean).join(' / ') || null,
     });
-    projectsUpserted++;
+  }
 
-    const existing = await prisma.areaAssignment.findFirst({
-      where: { projectId: project.id, zoneId: zone.id },
-    });
+  if (valid.length === 0) return { projectsUpserted: 0, assignmentsUpserted: 0, skipped };
 
+  // Parallel project upserts
+  const projects = await Promise.all(valid.map(({ row, description }) =>
+    prisma.project.upsert({
+      where: { projectNo: row.projectCode },
+      update: { clientName: row.client || null, description },
+      create: { projectNo: row.projectCode, clientName: row.client || null, description, status: 'confirmed' },
+    })
+  ));
+
+  // Parallel assignment upserts
+  await Promise.all(valid.map(async ({ zone, startDate, endDate, requiredAreaSqm, widthM, heightM }, idx) => {
+    const projectId = projects[idx].id;
+    const existing = await prisma.areaAssignment.findFirst({ where: { projectId, zoneId: zone.id } });
     if (existing) {
       await prisma.areaAssignment.update({
         where: { id: existing.id },
@@ -115,14 +123,13 @@ export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSync
       });
     } else {
       await prisma.areaAssignment.create({
-        data: { projectId: project.id, zoneId: zone.id, startDate, endDate, requiredAreaSqm, widthM, heightM, status: 'confirmed' },
+        data: { projectId, zoneId: zone.id, startDate, endDate, requiredAreaSqm, widthM, heightM, status: 'confirmed' },
       });
     }
-    assignmentsUpserted++;
-  }
+  }));
 
-  console.log(`Project sync done: ${projectsUpserted} projects, ${assignmentsUpserted} assignments, ${skipped} skipped`);
-  return { projectsUpserted, assignmentsUpserted, skipped };
+  console.log(`sync: ${valid.length} projects, ${valid.length} assignments, ${skipped} skipped`);
+  return { projectsUpserted: valid.length, assignmentsUpserted: valid.length, skipped };
 }
 
 export async function syncProjectsFromSheet(sheetsId: string): Promise<ProjectSyncResult & { source: 'sheets' | 'error' }> {
