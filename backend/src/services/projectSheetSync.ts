@@ -1,7 +1,7 @@
 import axios from 'axios';
 import prisma from '../lib/prisma';
 
-const PROJECT_SHEET_GID = '1283549642';
+const PROJECT_SHEET_GID = process.env.GOOGLE_PROJECT_SHEET_GID ?? '1283549642';
 
 export interface ProjectSyncResult {
   projectsUpserted: number;
@@ -42,6 +42,19 @@ function parseCSVRow(line: string): string[] {
   }
   cols.push(cur);
   return cols;
+}
+
+function getSheetFetchErrorMessage(err: unknown): string {
+  if (!axios.isAxiosError(err)) return (err as Error).message;
+
+  const status = err.response?.status;
+  if (status === 401 || status === 403) {
+    return 'Google Sheets 접근 권한이 없습니다. 시트를 "링크가 있는 모든 사용자 보기 가능"으로 공유하거나, 스프레드시트의 Apps Script에서 FLAS로 전송하세요.';
+  }
+  if (status === 400 || status === 404) {
+    return `Google Sheets 탭을 찾을 수 없습니다. GOOGLE_PROJECT_SHEET_GID=${PROJECT_SHEET_GID} 값과 삭제된 탭 여부를 확인하세요.`;
+  }
+  return err.message;
 }
 
 function parseDimensions(raw: string): { widthM: number; heightM: number; areaSqm: number } | null {
@@ -242,7 +255,7 @@ export async function syncProjectsFromSheet(sheetsId: string): Promise<ProjectSy
     });
     csvText = res.data;
   } catch (err) {
-    const message = (err as Error).message;
+    const message = getSheetFetchErrorMessage(err);
     console.error(`Project sheet sync failed: ${message}`);
     return { source: 'error', projectsUpserted: 0, assignmentsUpserted: 0, skipped: 0, error: message };
   }
