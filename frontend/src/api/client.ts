@@ -230,6 +230,8 @@ export interface ProjectSyncResult {
   projectsUpserted: number;
   assignmentsUpserted: number;
   skipped: number;
+  projectsDeleted?: number;
+  assignmentsDeleted?: number;
   error?: string;
 }
 

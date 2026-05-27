@@ -7,6 +7,8 @@ export interface ProjectSyncResult {
   projectsUpserted: number;
   assignmentsUpserted: number;
   skipped: number;
+  projectsDeleted?: number;
+  assignmentsDeleted?: number;
   error?: string;
 }
 
@@ -21,6 +23,10 @@ export interface ProjectRow {
   startDate: string;
   dimensions?: string;
   zoneName: string;
+}
+
+interface UpsertProjectRowsOptions {
+  replaceExisting?: boolean;
 }
 
 function parseCSVRow(line: string): string[] {
@@ -60,7 +66,8 @@ function findZone(zones: { id: number; name: string; availableAreaSqm: number }[
   return null;
 }
 
-export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSyncResult> {
+export async function upsertProjectRows(rows: ProjectRow[], options: UpsertProjectRowsOptions = {}): Promise<ProjectSyncResult> {
+  const replaceExisting = options.replaceExisting ?? true;
   const factories = await prisma.factory.findMany({ include: { zones: { where: { isActive: true } } } });
 
   const factoryMap = new Map<string, typeof factories[0]>();
@@ -128,40 +135,74 @@ export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSync
     description: [...project.descriptions].join('\n') || null,
   }));
 
-  // Query 1: bulk upsert unique projects, get IDs back
   const placeholders = projects.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, 'active', NOW(), NOW())`).join(', ');
   const values = projects.flatMap(p => [p.projectNo, p.clientName, p.description]);
-  const upserted = await prisma.$queryRawUnsafe<{ id: number; projectNo: string }[]>(
+  const incomingProjectNos = projects.map((p) => p.projectNo);
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Query 1: bulk upsert unique projects, get IDs back
+    const upserted = await tx.$queryRawUnsafe<{ id: number; projectNo: string }[]>(
     `INSERT INTO "Project" ("projectNo", "clientName", "description", "status", "createdAt", "updatedAt")
      VALUES ${placeholders}
      ON CONFLICT ("projectNo") DO UPDATE SET
        "clientName" = EXCLUDED."clientName",
        "description" = EXCLUDED."description",
+       "status" = 'active',
        "updatedAt" = NOW()
      RETURNING id, "projectNo"`,
-    ...values
-  );
-  const projectIdMap = new Map(upserted.map(p => [p.projectNo, p.id]));
+      ...values
+    );
+    const projectIdMap = new Map(upserted.map(p => [p.projectNo, p.id]));
 
-  // Query 2: delete old assignments for these projects (clean re-sync)
-  await prisma.areaAssignment.deleteMany({ where: { projectId: { in: [...projectIdMap.values()] } } });
+    // Query 2: delete assignments for projects no longer present in the current sheet.
+    const staleWhere = {
+      projectNo: { notIn: incomingProjectNos },
+      OR: [
+        { status: 'confirmed' },
+        { projectNo: { startsWith: 'U' } },
+      ],
+    };
+    const staleProjects = replaceExisting
+      ? await tx.project.findMany({ where: staleWhere, select: { id: true } })
+      : [];
+    const staleProjectIds = staleProjects.map((p) => p.id);
+    const staleAssignments = staleProjectIds.length > 0
+      ? await tx.areaAssignment.deleteMany({ where: { projectId: { in: staleProjectIds } } })
+      : { count: 0 };
+    const deletedProjects = staleProjectIds.length > 0
+      ? await tx.project.deleteMany({ where: { id: { in: staleProjectIds } } })
+      : { count: 0 };
 
-  // Query 3: bulk insert all assignments
-  await prisma.areaAssignment.createMany({
-    data: valid.map(v => ({
-      projectId: projectIdMap.get(v.row.projectCode)!,
-      zoneId: v.zone.id,
-      startDate: v.startDate,
-      endDate: v.endDate,
-      requiredAreaSqm: v.requiredAreaSqm,
-      widthM: v.widthM,
-      heightM: v.heightM,
-      status: 'confirmed',
-    })),
+    // Query 3: delete old assignments for incoming projects (clean re-sync).
+    await tx.areaAssignment.deleteMany({ where: { projectId: { in: [...projectIdMap.values()] } } });
+
+    // Query 4: bulk insert all current assignments.
+    await tx.areaAssignment.createMany({
+      data: valid.map(v => ({
+        projectId: projectIdMap.get(v.row.projectCode)!,
+        zoneId: v.zone.id,
+        startDate: v.startDate,
+        endDate: v.endDate,
+        requiredAreaSqm: v.requiredAreaSqm,
+        widthM: v.widthM,
+        heightM: v.heightM,
+        status: 'confirmed',
+      })),
+    });
+
+    return {
+      projectsDeleted: deletedProjects.count,
+      assignmentsDeleted: staleAssignments.count,
+    };
   });
 
-  console.log(`sync: ${projects.length} projects, ${valid.length} assignments, ${skipped} skipped`);
-  return { projectsUpserted: projects.length, assignmentsUpserted: valid.length, skipped };
+  console.log(`sync: ${projects.length} projects, ${valid.length} assignments, ${skipped} skipped, ${result.projectsDeleted} stale projects deleted`);
+  return {
+    projectsUpserted: projects.length,
+    assignmentsUpserted: valid.length,
+    skipped,
+    ...result,
+  };
 }
 
 export async function syncProjectsFromSheet(sheetsId: string): Promise<ProjectSyncResult & { source: 'sheets' | 'error' }> {
