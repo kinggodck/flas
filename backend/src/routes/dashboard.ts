@@ -1,7 +1,7 @@
 import prisma from '../lib/prisma';
 import { Router } from 'express';
 
-import { getLoadRateByPeriod } from '../services/loadCalculator';
+import { calculateLoadRateByPeriod } from '../services/loadCalculator';
 
 const router = Router();
 
@@ -23,6 +23,21 @@ router.get('/', async (req, res, next) => {
       include: { zones: { where: { isActive: true } } },
       orderBy: { name: 'asc' },
     });
+    const zones = factories.flatMap((factory) => factory.zones);
+    const zoneIds = zones.map((zone) => zone.id);
+    const yearStart = utcDate(year, 1, 1);
+    const yearEnd = utcDate(year, 12, 31);
+    const assignments = zoneIds.length > 0
+      ? await prisma.areaAssignment.findMany({
+          where: {
+            zoneId: { in: zoneIds },
+            status: 'confirmed',
+            startDate: { lte: yearEnd },
+            endDate: { gte: yearStart },
+          },
+          select: { zoneId: true, startDate: true, endDate: true, requiredAreaSqm: true },
+        })
+      : [];
 
     const monthRanges = Array.from({ length: 12 }, (_, i) => {
       const m = i + 1;
@@ -42,28 +57,26 @@ router.get('/', async (req, res, next) => {
       riskDayCount: number;
     }
 
-    const zoneMonthResults: ZoneMonthResult[] = await Promise.all(
-      factories.flatMap((factory) =>
-        factory.zones.flatMap((zone) =>
-          monthRanges.map(async ({ month, start, end }) => {
-            const days = await getLoadRateByPeriod(zone.id, start, end);
-            const rates = days.map((d) => d.loadRate);
-            const maxLoadRate = rates.length > 0 ? Math.max(...rates) : 0;
-            const avgLoadRate =
-              rates.length > 0 ? rates.reduce((s, r) => s + r, 0) / rates.length : 0;
-            const riskDayCount = days.filter((d) => d.loadRate > 100).length;
-            return {
-              factoryId: factory.id,
-              factoryName: factory.name,
-              zoneId: zone.id,
-              zoneName: zone.name,
-              month,
-              maxLoadRate,
-              avgLoadRate,
-              riskDayCount,
-            };
-          })
-        )
+    const zoneMonthResults: ZoneMonthResult[] = factories.flatMap((factory) =>
+      factory.zones.flatMap((zone) =>
+        monthRanges.map(({ month, start, end }) => {
+          const days = calculateLoadRateByPeriod(zone, assignments, start, end);
+          const rates = days.map((d) => d.loadRate);
+          const maxLoadRate = rates.length > 0 ? Math.max(...rates) : 0;
+          const avgLoadRate =
+            rates.length > 0 ? rates.reduce((s, r) => s + r, 0) / rates.length : 0;
+          const riskDayCount = days.filter((d) => d.loadRate > 100).length;
+          return {
+            factoryId: factory.id,
+            factoryName: factory.name,
+            zoneId: zone.id,
+            zoneName: zone.name,
+            month,
+            maxLoadRate,
+            avgLoadRate,
+            riskDayCount,
+          };
+        })
       )
     );
 
@@ -123,17 +136,27 @@ router.get('/factory/:id/month', async (req, res, next) => {
     const dim = daysInMonth(year, month);
     const start = utcDate(year, month, 1);
     const end = utcDate(year, month, dim);
+    const zoneIds = zones.map((zone) => zone.id);
+    const assignments = zoneIds.length > 0
+      ? await prisma.areaAssignment.findMany({
+          where: {
+            zoneId: { in: zoneIds },
+            status: 'confirmed',
+            startDate: { lte: end },
+            endDate: { gte: start },
+          },
+          select: { zoneId: true, startDate: true, endDate: true, requiredAreaSqm: true },
+        })
+      : [];
 
-    const zoneData = await Promise.all(
-      zones.map(async (zone) => {
-        const days = await getLoadRateByPeriod(zone.id, start, end);
-        const rates = days.map((d) => d.loadRate);
-        const maxLoadRate = rates.length > 0 ? Math.max(...rates) : 0;
-        const avgLoadRate =
-          rates.length > 0 ? rates.reduce((s, r) => s + r, 0) / rates.length : 0;
-        return { zoneId: zone.id, zoneName: zone.name, availableAreaSqm: Number(zone.availableAreaSqm), maxLoadRate, avgLoadRate, days };
-      })
-    );
+    const zoneData = zones.map((zone) => {
+      const days = calculateLoadRateByPeriod(zone, assignments, start, end);
+      const rates = days.map((d) => d.loadRate);
+      const maxLoadRate = rates.length > 0 ? Math.max(...rates) : 0;
+      const avgLoadRate =
+        rates.length > 0 ? rates.reduce((s, r) => s + r, 0) / rates.length : 0;
+      return { zoneId: zone.id, zoneName: zone.name, availableAreaSqm: Number(zone.availableAreaSqm), maxLoadRate, avgLoadRate, days };
+    });
 
     const dailySummary = Array.from({ length: dim }, (_, i) => {
       const dateStr = utcDate(year, month, i + 1).toISOString().slice(0, 10);

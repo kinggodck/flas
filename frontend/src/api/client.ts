@@ -232,6 +232,8 @@ export interface ProjectSyncResult {
   skipped: number;
   projectsDeleted?: number;
   assignmentsDeleted?: number;
+  skippedByReason?: Record<string, number>;
+  skippedSamples?: Array<{ reason: string; projectCode?: string; shopName?: string; zoneName?: string; dimensions?: string }>;
   error?: string;
 }
 

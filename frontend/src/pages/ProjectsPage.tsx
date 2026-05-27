@@ -273,7 +273,10 @@ export default function ProjectsPage() {
         setSyncMsg({ ok: false, text: `동기화 실패: ${r.error ?? '시트에 접근할 수 없습니다. 시트를 "링크가 있는 모든 사용자" 보기 권한으로 공유해주세요.'}` });
       } else {
         const deletedText = r.projectsDeleted ? `, 삭제 ${r.projectsDeleted}건` : '';
-        setSyncMsg({ ok: true, text: `동기화 완료 — 프로젝트 ${r.projectsUpserted}건, 배치 ${r.assignmentsUpserted}건${deletedText} (건너뜀 ${r.skipped}행)` });
+        const serverSkipText = r.skippedByReason
+          ? ` · 서버 스킵: ${Object.entries(r.skippedByReason).map(([reason, count]) => `${reason} ${count}`).join(', ')}`
+          : '';
+        setSyncMsg({ ok: true, text: `동기화 완료 — 프로젝트 ${r.projectsUpserted}건, 배치 ${r.assignmentsUpserted}건${deletedText} (건너뜀 ${r.skipped}행)${serverSkipText}` });
       }
     },
     onError: () => setSyncMsg({ ok: false, text: '동기화 실패. 서버 로그를 확인하세요.' }),

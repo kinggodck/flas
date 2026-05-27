@@ -9,6 +9,8 @@ export interface ProjectSyncResult {
   skipped: number;
   projectsDeleted?: number;
   assignmentsDeleted?: number;
+  skippedByReason?: Record<string, number>;
+  skippedSamples?: Array<{ reason: string; projectCode?: string; shopName?: string; zoneName?: string; dimensions?: string }>;
   error?: string;
 }
 
@@ -88,22 +90,41 @@ export async function upsertProjectRows(rows: ProjectRow[], options: UpsertProje
 
   const valid: ValidItem[] = [];
   let skipped = 0;
+  const skippedByReason: Record<string, number> = {};
+  const skippedSamples: NonNullable<ProjectSyncResult['skippedSamples']> = [];
+
+  const skip = (
+    reason: string,
+    row: Partial<ProjectRow>,
+  ) => {
+    skipped++;
+    skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
+    if (skippedSamples.length < 20) {
+      skippedSamples.push({
+        reason,
+        projectCode: row.projectCode,
+        shopName: row.shopName,
+        zoneName: row.zoneName,
+        dimensions: row.dimensions,
+      });
+    }
+  };
 
   for (const row of rows) {
     const { projectCode, division, client, item, productGroup, shopName, endDate: endDateStr, startDate: startDateStr, dimensions: dimStr, zoneName } = row;
 
     const startDate = new Date(startDateStr);
     const endDate = new Date(endDateStr);
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime()) || startDate >= endDate) { skipped++; continue; }
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime()) || startDate >= endDate) { skip('invalid date range', row); continue; }
 
     const factory = factoryMap.get(shopName) ?? factoryMap.get(shopName.replace(/\s*\(.*\)/, '').trim());
-    if (!factory) { console.warn(`unknown factory "${shopName}" (${projectCode})`); skipped++; continue; }
+    if (!factory) { console.warn(`unknown factory "${shopName}" (${projectCode})`); skip('unknown factory', row); continue; }
 
     const zone = findZone(factory.zones, zoneName);
-    if (!zone) { console.warn(`zone "${zoneName}" not in ${factory.name} (${projectCode})`); skipped++; continue; }
+    if (!zone) { console.warn(`zone "${zoneName}" not in ${factory.name} (${projectCode})`); skip('unknown zone', row); continue; }
 
     const dims = dimStr ? parseDimensions(dimStr) : null;
-    if (!dims) { skipped++; continue; }
+    if (!dims) { skip('invalid dimensions', row); continue; }
 
     valid.push({
       row, zone, startDate, endDate,
@@ -112,7 +133,9 @@ export async function upsertProjectRows(rows: ProjectRow[], options: UpsertProje
     });
   }
 
-  if (valid.length === 0) return { projectsUpserted: 0, assignmentsUpserted: 0, skipped };
+  if (valid.length === 0) {
+    return { projectsUpserted: 0, assignmentsUpserted: 0, skipped, skippedByReason, skippedSamples };
+  }
 
   const projectRows = new Map<string, { projectNo: string; clientName: string | null; descriptions: Set<string> }>();
   for (const item of valid) {
@@ -201,6 +224,8 @@ export async function upsertProjectRows(rows: ProjectRow[], options: UpsertProje
     projectsUpserted: projects.length,
     assignmentsUpserted: valid.length,
     skipped,
+    skippedByReason,
+    skippedSamples,
     ...result,
   };
 }

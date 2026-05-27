@@ -41,12 +41,12 @@ app.post('/api/admin/sync-sheets', async (_req, res, next) => {
 // Apps Script push endpoint — receives pre-parsed rows from Google Sheets
 app.post('/api/admin/push-projects', async (req, res, next) => {
   try {
-    const { rows } = req.body as { rows: ProjectRow[] };
+    const { rows, replaceExisting } = req.body as { rows: ProjectRow[]; replaceExisting?: boolean };
     if (!Array.isArray(rows)) {
       res.status(400).json({ error: 'rows 배열이 필요합니다.' });
       return;
     }
-    const result = await upsertProjectRows(rows);
+    const result = await upsertProjectRows(rows, { replaceExisting });
     res.json({ ok: true, ...result });
   } catch (e) { next(e); }
 });

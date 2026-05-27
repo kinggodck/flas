@@ -57,3 +57,32 @@ export async function getLoadRateByPeriod(
   }
   return days;
 }
+
+export function calculateLoadRateByPeriod(
+  zone: { id: number; availableAreaSqm: number },
+  assignments: { zoneId: number; startDate: Date; endDate: Date; requiredAreaSqm: number }[],
+  start: Date,
+  end: Date
+): DayLoad[] {
+  const availableArea = Number(zone.availableAreaSqm);
+  const zoneAssignments = assignments.filter((a) => a.zoneId === zone.id);
+  const days: DayLoad[] = [];
+  const cur = new Date(start);
+
+  while (cur <= end) {
+    const dateStr = cur.toISOString().slice(0, 10);
+    const occupied = zoneAssignments
+      .filter((a) => a.startDate <= cur && a.endDate >= cur)
+      .reduce((sum: number, a) => sum + Number(a.requiredAreaSqm), 0);
+
+    days.push({
+      date: dateStr,
+      occupiedArea: occupied,
+      availableArea,
+      loadRate: availableArea > 0 ? (occupied / availableArea) * 100 : 0,
+    });
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return days;
+}
