@@ -14,6 +14,7 @@
     "db:up": "docker-compose up -d",
     "db:down": "docker-compose down",
     "db:migrate": "npm run db:migrate --workspace=backend",
-    "db:seed": "npm run db:seed --workspace=backend"
+    "db:seed": "npm run db:seed --workspace=backend",
+    "vercel-build": "npx prisma generate --schema=backend/prisma/schema.prisma && npx prisma migrate deploy --schema=backend/prisma/schema.prisma && npm run build -w backend && npm run build -w frontend"
   }
 }
