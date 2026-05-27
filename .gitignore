@@ -9,3 +9,4 @@ backend/dev.db-journal
 backend/prisma/*.db
 .DS_Store
 *.log
+.vercel

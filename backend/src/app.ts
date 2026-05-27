@@ -11,7 +11,8 @@ import ganttRouter from './routes/gantt';
 import dashboardRouter from './routes/dashboard';
 import { errorHandler } from './middleware/errorHandler';
 import { syncFactories } from './services/sheetsSync';
-import { syncProjectsFromSheet } from './services/projectSheetSync';
+import { syncProjectsFromSheet, upsertProjectRows } from './services/projectSheetSync';
+import type { ProjectRow } from './services/projectSheetSync';
 
 const app = express();
 const isProd = process.env.NODE_ENV === 'production';
@@ -33,6 +34,19 @@ app.use('/api/dashboard', dashboardRouter);
 app.post('/api/admin/sync-sheets', async (_req, res, next) => {
   try {
     const result = await syncFactories(process.env.GOOGLE_SHEETS_ID);
+    res.json({ ok: true, ...result });
+  } catch (e) { next(e); }
+});
+
+// Apps Script push endpoint — receives pre-parsed rows from Google Sheets
+app.post('/api/admin/push-projects', async (req, res, next) => {
+  try {
+    const { rows } = req.body as { rows: ProjectRow[] };
+    if (!Array.isArray(rows)) {
+      res.status(400).json({ error: 'rows 배열이 필요합니다.' });
+      return;
+    }
+    const result = await upsertProjectRows(rows);
     res.json({ ok: true, ...result });
   } catch (e) { next(e); }
 });
