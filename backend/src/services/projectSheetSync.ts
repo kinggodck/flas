@@ -37,11 +37,16 @@ function parseCSVRow(line: string): string[] {
 }
 
 function parseDimensions(raw: string): { widthM: number; heightM: number; areaSqm: number } | null {
-  const m = raw.trim().match(/^([\d.]+)\s*[xX×]\s*([\d.]+)$/);
+  const normalized = raw.trim().replace(/,/g, '').replace(/[X×＊*]/g, 'x');
+  const m = normalized.match(/^([\d.]+)\s*x\s*([\d.]+)$/);
   if (!m) return null;
-  const w = parseFloat(m[1]);
-  const h = parseFloat(m[2]);
+  let w = parseFloat(m[1]);
+  let h = parseFloat(m[2]);
   if (!w || !h) return null;
+  if (w > 500 || h > 500) {
+    w /= 1000;
+    h /= 1000;
+  }
   return { widthM: w, heightM: h, areaSqm: w * h };
 }
 
@@ -102,9 +107,30 @@ export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSync
 
   if (valid.length === 0) return { projectsUpserted: 0, assignmentsUpserted: 0, skipped };
 
-  // Query 1: bulk upsert all projects, get IDs back
-  const placeholders = valid.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, 'confirmed', NOW(), NOW())`).join(', ');
-  const values = valid.flatMap(v => [v.row.projectCode, v.row.client || null, v.description]);
+  const projectRows = new Map<string, { projectNo: string; clientName: string | null; descriptions: Set<string> }>();
+  for (const item of valid) {
+    const projectNo = item.row.projectCode;
+    const project = projectRows.get(projectNo);
+    if (project) {
+      if (!project.clientName && item.row.client) project.clientName = item.row.client;
+      if (item.description) project.descriptions.add(item.description);
+    } else {
+      projectRows.set(projectNo, {
+        projectNo,
+        clientName: item.row.client || null,
+        descriptions: item.description ? new Set([item.description]) : new Set(),
+      });
+    }
+  }
+  const projects = [...projectRows.values()].map((project) => ({
+    projectNo: project.projectNo,
+    clientName: project.clientName,
+    description: [...project.descriptions].join('\n') || null,
+  }));
+
+  // Query 1: bulk upsert unique projects, get IDs back
+  const placeholders = projects.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, 'active', NOW(), NOW())`).join(', ');
+  const values = projects.flatMap(p => [p.projectNo, p.clientName, p.description]);
   const upserted = await prisma.$queryRawUnsafe<{ id: number; projectNo: string }[]>(
     `INSERT INTO "Project" ("projectNo", "clientName", "description", "status", "createdAt", "updatedAt")
      VALUES ${placeholders}
@@ -134,8 +160,8 @@ export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSync
     })),
   });
 
-  console.log(`sync: ${valid.length} projects, ${valid.length} assignments, ${skipped} skipped`);
-  return { projectsUpserted: valid.length, assignmentsUpserted: valid.length, skipped };
+  console.log(`sync: ${projects.length} projects, ${valid.length} assignments, ${skipped} skipped`);
+  return { projectsUpserted: projects.length, assignmentsUpserted: valid.length, skipped };
 }
 
 export async function syncProjectsFromSheet(sheetsId: string): Promise<ProjectSyncResult & { source: 'sheets' | 'error' }> {
