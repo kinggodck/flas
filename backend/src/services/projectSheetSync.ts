@@ -91,11 +91,10 @@ export async function upsertProjectRows(rows: ProjectRow[]): Promise<ProjectSync
       skipped++; continue;
     }
 
-    // Use parsed dimensions if available, otherwise fall back to zone's full area
+    // Skip rows without valid dimensions
     const dims = dimStr ? parseDimensions(dimStr) : null;
-    const requiredAreaSqm = dims ? dims.areaSqm : zone.availableAreaSqm;
-    const widthM = dims?.widthM ?? null;
-    const heightM = dims?.heightM ?? null;
+    if (!dims) { skipped++; continue; }
+    const { areaSqm: requiredAreaSqm, widthM, heightM } = dims;
 
     const description = [division, item, productGroup].filter(Boolean).join(' / ') || null;
     const project = await prisma.project.upsert({

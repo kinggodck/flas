@@ -20,7 +20,7 @@ const isProd = process.env.NODE_ENV === 'production';
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: isProd ? false : 'http://localhost:5173' }));
 app.use(morgan(isProd ? 'combined' : 'dev'));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
