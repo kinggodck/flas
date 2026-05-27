@@ -222,3 +222,16 @@ export const getDrilldown = (factoryId: number, year: number, month: number) =>
   api
     .get<DrilldownData>(`/dashboard/factory/${factoryId}/month`, { params: { year, month } })
     .then((r) => r.data);
+
+// ── Admin ──────────────────────────────────────────────
+export interface ProjectSyncResult {
+  ok: boolean;
+  source: 'sheets' | 'error';
+  projectsUpserted: number;
+  assignmentsUpserted: number;
+  skipped: number;
+  error?: string;
+}
+
+export const syncProjectsSheet = () =>
+  api.post<ProjectSyncResult>('/admin/sync-projects').then((r) => r.data);

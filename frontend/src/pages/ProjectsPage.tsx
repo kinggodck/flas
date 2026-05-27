@@ -9,8 +9,9 @@ import {
   deleteProject,
   createAssignment,
   deleteAssignment,
+  syncProjectsSheet,
 } from '../api/client';
-import type { Factory, Project, Assignment, ValidationResult } from '../api/client';
+import type { Factory, Project, Assignment, ValidationResult, ProjectSyncResult } from '../api/client';
 
 // ── 부하율 배지 ─────────────────────────────────────────
 function LoadBadge({ pct }: { pct: number }) {
@@ -262,6 +263,20 @@ export default function ProjectsPage() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [projectForm, setProjectForm] = useState<{ open: boolean; project?: Project }>({ open: false });
   const [assignForm, setAssignForm] = useState<{ open: boolean; projectId: number }>({ open: false, projectId: 0 });
+  const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const syncMut = useMutation({
+    mutationFn: syncProjectsSheet,
+    onSuccess: (r: ProjectSyncResult) => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      if (r.source === 'error') {
+        setSyncMsg({ ok: false, text: `동기화 실패: ${r.error ?? '시트에 접근할 수 없습니다. 시트를 "링크가 있는 모든 사용자" 보기 권한으로 공유해주세요.'}` });
+      } else {
+        setSyncMsg({ ok: true, text: `동기화 완료 — 프로젝트 ${r.projectsUpserted}건, 배치 ${r.assignmentsUpserted}건 (건너뜀 ${r.skipped}행)` });
+      }
+    },
+    onError: () => setSyncMsg({ ok: false, text: '동기화 실패. 서버 로그를 확인하세요.' }),
+  });
 
   const delProject = useMutation({
     mutationFn: deleteProject,
@@ -285,10 +300,26 @@ export default function ProjectsPage() {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-xl font-bold text-gray-800">프로젝트 관리</h1>
-        <button onClick={() => setProjectForm({ open: true })} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
-          + 프로젝트 등록
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setSyncMsg(null); syncMut.mutate(); }}
+            disabled={syncMut.isPending}
+            className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {syncMut.isPending ? '동기화 중…' : '구글 시트 동기화'}
+          </button>
+          <button onClick={() => setProjectForm({ open: true })} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
+            + 프로젝트 등록
+          </button>
+        </div>
       </div>
+
+      {syncMsg && (
+        <div className={`mb-4 px-4 py-3 rounded-lg text-sm flex justify-between items-center ${syncMsg.ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          <span>{syncMsg.text}</span>
+          <button onClick={() => setSyncMsg(null)} className="ml-4 text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+      )}
 
       {projects.length === 0 && (
         <div className="text-center py-16 text-gray-400">

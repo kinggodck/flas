@@ -12,6 +12,7 @@ import ganttRouter from './routes/gantt';
 import dashboardRouter from './routes/dashboard';
 import { errorHandler } from './middleware/errorHandler';
 import { autoSync, syncFactories } from './services/sheetsSync';
+import { syncProjectsFromSheet } from './services/projectSheetSync';
 
 // Run prisma migrate deploy with retries (non-blocking server startup)
 async function runMigrations(): Promise<void> {
@@ -56,6 +57,21 @@ app.post('/api/admin/sync-sheets', async (_req, res, next) => {
   try {
     const result = await syncFactories(process.env.GOOGLE_SHEETS_ID);
     res.json({ ok: true, ...result });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Project data sync from Google Sheets
+app.post('/api/admin/sync-projects', async (_req, res, next) => {
+  try {
+    const sheetsId = process.env.GOOGLE_PROJECT_SHEETS_ID;
+    if (!sheetsId) {
+      res.status(400).json({ error: 'GOOGLE_PROJECT_SHEETS_ID 환경변수가 설정되지 않았습니다.' });
+      return;
+    }
+    const result = await syncProjectsFromSheet(sheetsId);
+    res.json({ ok: result.source === 'sheets', ...result });
   } catch (e) {
     next(e);
   }
