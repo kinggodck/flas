@@ -41,16 +41,17 @@ app.post('/api/admin/sync-sheets', async (_req, res, next) => {
 // Apps Script push endpoint — receives pre-parsed rows from Google Sheets
 app.post('/api/admin/push-projects', async (req, res, next) => {
   try {
-    const { rows, replaceExisting, allStubs } = req.body as {
+    const { rows, replaceExisting, allStubs, allProjectNos } = req.body as {
       rows: ProjectRow[];
       replaceExisting?: boolean;
       allStubs?: { projectCode: string; division?: string; client?: string }[];
+      allProjectNos?: string[];  // 전체 배치에 걸쳐 유효한 프로젝트 코드 목록 (stale 판단 기준)
     };
     if (!Array.isArray(rows)) {
       res.status(400).json({ error: 'rows 배열이 필요합니다.' });
       return;
     }
-    const result = await upsertProjectRows(rows, { replaceExisting, allStubs });
+    const result = await upsertProjectRows(rows, { replaceExisting, allStubs, allProjectNos });
     res.json({ ok: true, ...result });
   } catch (e) { next(e); }
 });

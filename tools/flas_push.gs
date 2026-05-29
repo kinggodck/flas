@@ -216,45 +216,76 @@ function pushToFLAS() {
     });
   }
 
-  // 공장 배치 없는 행도 프로젝트 정보는 수집 (사업부문 보존)
-  var allStubs = {};
+  // ── 전체 프로젝트 코드 + stub 수집 (공장 없는 행 포함) ─────────────
+  var allStubsMap = {};
+  var allValidProjectNos = [];
   for (var si = SKIP_ROWS; si < data.length; si++) {
     var srow = data[si];
     var scode = String(srow[COL.PROJECT_CODE] || '').trim();
-    if (!scode || allStubs[scode]) continue;
-    allStubs[scode] = {
-      projectCode: scode,
-      division: String(srow[COL.DIVISION] || '').trim() || undefined,
-      client:   String(srow[COL.CLIENT]   || '').trim() || undefined,
-    };
+    if (!scode) continue;
+    if (!allStubsMap[scode]) {
+      allStubsMap[scode] = {
+        projectCode: scode,
+        division: String(srow[COL.DIVISION] || '').trim() || undefined,
+        client:   String(srow[COL.CLIENT]   || '').trim() || undefined,
+      };
+    }
   }
-  var stubsArray = Object.values(allStubs);
+  var stubsArray = Object.values(allStubsMap);
+
+  // 배치 전송에 포함될 프로젝트 코드 전체 목록 (stale 정리 기준)
+  for (var ri = 0; ri < rows.length; ri++) {
+    var rpCode = rows[ri].projectCode;
+    if (rpCode && allValidProjectNos.indexOf(rpCode) === -1) allValidProjectNos.push(rpCode);
+  }
 
   if (rows.length === 0 && stubsArray.length === 0) {
     logAndAlert('경고', '유효한 데이터 행이 없습니다. 컬럼 인덱스(COL)를 확인하세요.');
     return;
   }
 
-  // Vercel 함수 타임아웃(10~60초) 대응: 200행씩 분할 전송
-  var BATCH_SIZE = 200;
+  var BATCH_SIZE = 100;   // 504 timeout 방지: 200 → 100
   var url = FLAS_SERVER_URL.replace(/\/$/, '') + '/api/admin/push-projects';
   var totalProjects = 0, totalAssignments = 0, totalSkipped = 0, totalDeleted = 0;
   var allSkipReasons = {}, allSkipSamples = [];
   var errors = [];
 
+  // ── 0단계: 프로젝트 upsert + stale 정리 (rows 없이 먼저 실행) ────────
+  try {
+    var preRes = UrlFetchApp.fetch(url, {
+      method      : 'post',
+      contentType : 'application/json',
+      payload     : JSON.stringify({
+        rows           : [],           // 배치 없이
+        replaceExisting: true,         // stale 정리
+        allStubs       : stubsArray,   // 전체 프로젝트 upsert
+        allProjectNos  : allValidProjectNos,  // stale 판단 기준
+      }),
+      muteHttpExceptions: true,
+      headers: { 'X-FLAS-Source': 'apps-script', 'X-Sheet-Id': ss.getId() },
+    });
+    var preCode = preRes.getResponseCode();
+    var preBody = preRes.getContentText();
+    if (preCode === 200) {
+      var preResult = JSON.parse(preBody);
+      totalProjects += preResult.projectsUpserted || 0;
+      totalDeleted  += preResult.projectsDeleted  || 0;
+    } else {
+      errors.push('사전 정리 HTTP ' + preCode + ': ' + preBody.slice(0, 150));
+    }
+  } catch (e) {
+    errors.push('사전 정리 실패: ' + e.toString().slice(0, 100));
+  }
+
+  // ── 1~N단계: 배치별 배치(assignment) 삽입 ──────────────────────────
   for (var batchStart = 0; batchStart < rows.length; batchStart += BATCH_SIZE) {
     var batch = rows.slice(batchStart, batchStart + BATCH_SIZE);
-    var isFirst = batchStart === 0;
 
     try {
       var response = UrlFetchApp.fetch(url, {
         method      : 'post',
         contentType : 'application/json',
-        payload     : JSON.stringify({
-          rows: batch,
-          replaceExisting: isFirst,
-          allStubs: isFirst ? stubsArray : undefined,
-        }),
+        payload     : JSON.stringify({ rows: batch, replaceExisting: false }),
         muteHttpExceptions: true,
         headers     : { 'X-FLAS-Source': 'apps-script', 'X-Sheet-Id': ss.getId() },
       });
@@ -263,7 +294,7 @@ function pushToFLAS() {
       var body = response.getContentText();
 
       if (code !== 200) {
-        errors.push('배치 ' + (batchStart/BATCH_SIZE+1) + ' HTTP ' + code + ': ' + body.slice(0, 100));
+        errors.push('배치 ' + (batchStart/BATCH_SIZE+1) + ' HTTP ' + code + ': ' + body.slice(0, 120));
         continue;
       }
 
@@ -277,7 +308,6 @@ function pushToFLAS() {
       totalProjects    += result.projectsUpserted    || 0;
       totalAssignments += result.assignmentsUpserted || 0;
       totalSkipped     += result.skipped             || 0;
-      totalDeleted     += result.projectsDeleted     || 0;
 
       if (result.skippedByReason) {
         for (var r in result.skippedByReason) {

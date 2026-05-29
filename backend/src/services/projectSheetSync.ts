@@ -132,7 +132,10 @@ function findZone(
 
 export async function upsertProjectRows(
   rows: ProjectRow[],
-  options: UpsertProjectRowsOptions & { allStubs?: { projectCode: string; division?: string; client?: string }[] } = {},
+  options: UpsertProjectRowsOptions & {
+    allStubs?: { projectCode: string; division?: string; client?: string }[];
+    allProjectNos?: string[];  // 전체 배치에 걸친 유효 프로젝트 코드 (stale 판단 기준)
+  } = {},
 ): Promise<ProjectSyncResult> {
   const replaceExisting = options.replaceExisting ?? true;
 
@@ -290,11 +293,15 @@ export async function upsertProjectRows(
     projectIdMap.set(p.projectNo, proj.id);
   }
 
-  // 2. 오래된 프로젝트 삭제
+  // 2. 오래된 프로젝트 삭제 — allProjectNos가 있으면 그것을 기준으로 사용
+  const staleExcludeList = options.allProjectNos && options.allProjectNos.length > 0
+    ? options.allProjectNos
+    : incomingProjectNos;
+
   let deletedProjects = 0, deletedAssignments = 0;
   if (replaceExisting) {
     const staleProjects = await prisma.project.findMany({
-      where: { projectNo: { notIn: incomingProjectNos } },
+      where: { projectNo: { notIn: staleExcludeList } },
       select: { id: true },
     });
     if (staleProjects.length > 0) {
