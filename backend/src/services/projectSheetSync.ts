@@ -291,7 +291,7 @@ export async function upsertProjectRows(
   await prisma.areaDemandSegment.deleteMany({ where: { assignment: { projectId: { in: incomingIds } } } });
   await prisma.areaAssignment.deleteMany({ where: { projectId: { in: incomingIds } } });
 
-  // 4. 배치 삽입 (청크 단위로 처리해 Neon 연결 안정성 확보)
+  // 4. 배치 삽입 (50건 청크)
   const CHUNK = 50;
   let assignmentsUpserted = 0;
   for (let i = 0; i < valid.length; i += CHUNK) {
@@ -311,6 +311,43 @@ export async function upsertProjectRows(
       })),
     });
     assignmentsUpserted += created.count;
+  }
+
+  // 5. ProjectItem 동기화 — 시트의 ITEM/규격 컬럼 → 아이템별 면적 대시보드용
+  // 동일 프로젝트의 중복 아이템은 (itemName + widthM + heightM) 기준으로 제거
+  await prisma.projectItem.deleteMany({ where: { projectId: { in: incomingIds } } });
+
+  const seenItemKey = new Set<string>();
+  const itemData: {
+    projectId: number; itemName: string; itemCategory: string | null;
+    widthM: number; heightM: number; quantity: number; marginRate: number;
+    unitAreaSqm: number; totalAreaSqm: number;
+  }[] = [];
+
+  for (const v of valid) {
+    const itemName = v.row.item?.trim() || v.row.projectCode;
+    if (!itemName) continue;
+    const key = `${v.row.projectCode}|${itemName}|${v.widthM}|${v.heightM}`;
+    if (seenItemKey.has(key)) continue;
+    seenItemKey.add(key);
+
+    const unitAreaSqm = v.widthM * v.heightM;
+    const totalAreaSqm = unitAreaSqm * v.quantity * (1 + v.marginRate / 100);
+    itemData.push({
+      projectId: projectIdMap.get(v.row.projectCode)!,
+      itemName,
+      itemCategory: v.row.productGroup?.trim() || null,
+      widthM: v.widthM,
+      heightM: v.heightM,
+      quantity: v.quantity,
+      marginRate: v.marginRate,
+      unitAreaSqm,
+      totalAreaSqm,
+    });
+  }
+
+  for (let i = 0; i < itemData.length; i += CHUNK) {
+    await prisma.projectItem.createMany({ data: itemData.slice(i, i + CHUNK) });
   }
 
   const result = { deletedProjects, deletedAssignments, assignmentsUpserted };
