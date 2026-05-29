@@ -35,7 +35,10 @@ export default function ReplacementModal({
         zoneId: selected!.zone.id,
         startDate: assignment.startDate,
         endDate: assignment.endDate,
-        requiredAreaSqm: assignment.requiredAreaSqm,
+        widthM: assignment.widthM ?? undefined,
+        heightM: assignment.heightM ?? undefined,
+        quantity: assignment.quantity ?? undefined,
+        marginRate: assignment.marginRate ?? undefined,
         force: selected!.hasConflict,
       }),
     onSuccess: () => {

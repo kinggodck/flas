@@ -15,6 +15,6 @@
     "db:down": "docker-compose down",
     "db:migrate": "npm run db:migrate --workspace=backend",
     "db:seed": "npm run db:seed --workspace=backend",
-    "vercel-build": "npx prisma generate --schema=backend/prisma/schema.prisma && (npx prisma migrate deploy --schema=backend/prisma/schema.prisma || echo 'Migration warning — continuing build') && npm run build -w backend && npm run build -w frontend"
+    "vercel-build": "npx prisma generate --schema=backend/prisma/schema.prisma && (npx prisma migrate resolve --rolled-back 20260529143046_v9_init --schema=backend/prisma/schema.prisma 2>/dev/null || true) && (npx prisma migrate deploy --schema=backend/prisma/schema.prisma || echo 'Migration warning — continuing build') && npm run build -w backend && npm run build -w frontend"
   }
 }
