@@ -50,6 +50,7 @@ function onOpen() {
     .addItem('📋 컬럼 구조 확인', 'debugColumns')
     .addItem('🔍 면적/날짜 샘플 확인', 'debugDimSamples')
     .addItem('🏭 공장별 zone 요약', 'debugFactorySummary')
+    .addItem('🏢 사업부구분 값 확인', 'debugDivisions')
     .addSeparator()
     .addItem('자동 동기화 설정 (15분)', 'setTrigger')
     .addItem('자동 동기화 해제', 'removeTrigger')
@@ -435,6 +436,43 @@ function debugFactorySummary() {
     '① 공장(시트값) — 이진이 "이진" or "이진공장" 등 어떤 값인지\n' +
     '② 고유zone목록 — FLAS DB의 zone명과 일치하는지\n' +
     '확인 후 알려주세요.');
+}
+
+/**
+ * C열(사업부구분) 고유값 확인 — 어떤 사업부 값이 시트에 있는지 파악
+ */
+function debugDivisions() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getProjectSheet(ss);
+  if (!sheet) { showAlert('오류', '시트를 찾을 수 없습니다.'); return; }
+
+  var data = sheet.getDataRange().getValues();
+  var divCount = {};
+
+  for (var i = SKIP_ROWS; i < data.length; i++) {
+    var row = data[i];
+    var code = String(row[COL.PROJECT_CODE] || '').trim();
+    if (!code) continue;
+    var div = String(row[COL.DIVISION] || '').trim() || '(빈값)';
+    divCount[div] = (divCount[div] || 0) + 1;
+  }
+
+  var logSheet = ss.getSheetByName('FLAS_COL_DEBUG');
+  if (!logSheet) logSheet = ss.insertSheet('FLAS_COL_DEBUG');
+  else logSheet.clearContents();
+
+  logSheet.appendRow(['사업부구분값 (C열 index=' + COL.DIVISION + ')', '행 수']);
+  for (var div in divCount) {
+    logSheet.appendRow([div, divCount[div]]);
+  }
+  logSheet.getRange(1, 1, 1, 2).setFontWeight('bold').setBackground('#673ab7').setFontColor('white');
+  logSheet.autoResizeColumns(1, 2);
+  ss.setActiveSheet(logSheet);
+
+  var total = Object.keys(divCount).length;
+  showAlert('🏢 사업부구분 값 목록',
+    '총 ' + total + '가지 값이 있습니다.\nFLAS_COL_DEBUG 탭에서 확인하세요.\n\n' +
+    Object.entries(divCount).map(function(e) { return e[0] + ': ' + e[1] + '건'; }).join('\n'));
 }
 
 /**
