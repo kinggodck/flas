@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "AreaAssignment" ADD COLUMN "widthM" DOUBLE PRECISION;
+ALTER TABLE "AreaAssignment" ADD COLUMN "heightM" DOUBLE PRECISION;
