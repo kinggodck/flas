@@ -216,7 +216,21 @@ function pushToFLAS() {
     });
   }
 
-  if (rows.length === 0) {
+  // 공장 배치 없는 행도 프로젝트 정보는 수집 (사업부문 보존)
+  var allStubs = {};
+  for (var si = SKIP_ROWS; si < data.length; si++) {
+    var srow = data[si];
+    var scode = String(srow[COL.PROJECT_CODE] || '').trim();
+    if (!scode || allStubs[scode]) continue;
+    allStubs[scode] = {
+      projectCode: scode,
+      division: String(srow[COL.DIVISION] || '').trim() || undefined,
+      client:   String(srow[COL.CLIENT]   || '').trim() || undefined,
+    };
+  }
+  var stubsArray = Object.values(allStubs);
+
+  if (rows.length === 0 && stubsArray.length === 0) {
     logAndAlert('경고', '유효한 데이터 행이 없습니다. 컬럼 인덱스(COL)를 확인하세요.');
     return;
   }
@@ -236,7 +250,11 @@ function pushToFLAS() {
       var response = UrlFetchApp.fetch(url, {
         method      : 'post',
         contentType : 'application/json',
-        payload     : JSON.stringify({ rows: batch, replaceExisting: isFirst }),
+        payload     : JSON.stringify({
+          rows: batch,
+          replaceExisting: isFirst,
+          allStubs: isFirst ? stubsArray : undefined,
+        }),
         muteHttpExceptions: true,
         headers     : { 'X-FLAS-Source': 'apps-script', 'X-Sheet-Id': ss.getId() },
       });

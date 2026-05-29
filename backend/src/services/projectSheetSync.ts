@@ -132,9 +132,30 @@ function findZone(
 
 export async function upsertProjectRows(
   rows: ProjectRow[],
-  options: UpsertProjectRowsOptions = {},
+  options: UpsertProjectRowsOptions & { allStubs?: { projectCode: string; division?: string; client?: string }[] } = {},
 ): Promise<ProjectSyncResult> {
   const replaceExisting = options.replaceExisting ?? true;
+
+  // 공장 배치 없이도 프로젝트 정보만 upsert (사업부문 보존용)
+  if (options.allStubs && options.allStubs.length > 0) {
+    for (const stub of options.allStubs) {
+      if (!stub.projectCode) continue;
+      await prisma.project.upsert({
+        where: { projectNo: stub.projectCode },
+        update: {
+          businessDivision: stub.division || undefined,
+          clientName: stub.client || undefined,
+          updatedAt: new Date(),
+        },
+        create: {
+          projectNo: stub.projectCode,
+          clientName: stub.client || null,
+          businessDivision: stub.division || null,
+          status: 'active',
+        },
+      });
+    }
+  }
   const factories = await prisma.factory.findMany({
     include: { zones: { where: { isActive: true } } },
   });
