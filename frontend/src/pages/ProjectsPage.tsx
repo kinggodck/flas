@@ -4,9 +4,8 @@ import axios from 'axios';
 import {
   getFactories, getProjects, createProject, deleteProject,
   createAssignment, deleteAssignment, createProjectItem, deleteProjectItem,
-  syncProjectsSheet,
 } from '../api/client';
-import type { Factory, Project, ProjectItem, ValidationResult, ProjectSyncResult } from '../api/client';
+import type { Factory, Project, ProjectItem, ValidationResult } from '../api/client';
 
 const BU_OPTIONS = ['플랜트 BU', '방산 BU', '중공업 BU', '기타'];
 
@@ -411,52 +410,15 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── 동기화 결과 배너 ───────────────────────────────────────────────
-function SyncResultBanner({ result, onClose }: { result: ProjectSyncResult; onClose: () => void }) {
-  const isOk = result.source === 'sheets';
-  return (
-    <div className={`rounded-lg p-4 mb-4 border ${isOk ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-      <div className="flex justify-between items-start">
-        <div>
-          <p className={`font-semibold text-sm ${isOk ? 'text-green-700' : 'text-red-700'}`}>
-            {isOk ? '✓ Google Sheets 동기화 완료' : '✗ 동기화 실패'}
-          </p>
-          {isOk ? (
-            <p className="text-xs text-green-600 mt-1">
-              프로젝트 {result.projectsUpserted}건 · 배치 {result.assignmentsUpserted}건 처리
-              {result.skipped > 0 && ` · 스킵 ${result.skipped}건`}
-              {result.projectsDeleted ? ` · 삭제 ${result.projectsDeleted}건` : ''}
-            </p>
-          ) : (
-            <p className="text-xs text-red-600 mt-1">{result.error}</p>
-          )}
-          {result.skippedByReason && Object.keys(result.skippedByReason).length > 0 && (
-            <div className="mt-2 text-xs text-gray-500">
-              {Object.entries(result.skippedByReason).map(([k, v]) => <span key={k} className="mr-3">{k}: {v}건</span>)}
-            </div>
-          )}
-        </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 ml-4">×</button>
-      </div>
-    </div>
-  );
-}
 
 // ── Main Page ──────────────────────────────────────────────────────
 export default function ProjectsPage() {
-  const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
-  const [syncResult, setSyncResult] = useState<ProjectSyncResult | null>(null);
   const [search, setSearch] = useState('');
   const [buFilter, setBuFilter] = useState('');
 
   const { data: projects = [], isLoading } = useQuery({ queryKey: ['projects'], queryFn: getProjects });
   const { data: factories = [] } = useQuery({ queryKey: ['factories'], queryFn: getFactories });
-
-  const syncMut = useMutation({
-    mutationFn: syncProjectsSheet,
-    onSuccess: result => { setSyncResult(result); qc.invalidateQueries({ queryKey: ['projects'] }); },
-  });
 
   const allBUs = [...new Set(projects.map(p => p.businessDivision).filter(Boolean) as string[])].sort();
 
@@ -484,17 +446,11 @@ export default function ProjectsPage() {
           </select>
         )}
         <button onClick={() => setShowCreate(true)} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">+ 프로젝트 등록</button>
-        <button
-          onClick={() => syncMut.mutate()}
-          disabled={syncMut.isPending}
-          className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-        >
-          {syncMut.isPending ? '동기화 중…' : '↻ Sheets 동기화'}
-        </button>
+        <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+          ↻ 동기화: Google Sheets Apps Script에서 실행
+        </span>
         <span className="text-xs text-gray-400 ml-auto">총 {filtered.length}건</span>
       </div>
-
-      {syncResult && <SyncResultBanner result={syncResult} onClose={() => setSyncResult(null)} />}
 
       {isLoading && <p className="text-gray-400 text-center py-20">로딩 중…</p>}
 
