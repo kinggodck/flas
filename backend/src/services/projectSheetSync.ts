@@ -255,74 +255,65 @@ export async function upsertProjectRows(
 
   const incomingProjectNos = [...projectRows.keys()];
 
-  const result = await prisma.$transaction(async tx => {
-    // 프로젝트 upsert
-    const projectIdMap = new Map<string, number>();
-    for (const p of projectRows.values()) {
-      const proj = await tx.project.upsert({
-        where: { projectNo: p.projectNo },
-        update: { clientName: p.clientName, description: [...p.descriptions].join('\n') || null, businessDivision: p.businessDivision, status: 'active', updatedAt: new Date() },
-        create: { projectNo: p.projectNo, clientName: p.clientName, description: [...p.descriptions].join('\n') || null, businessDivision: p.businessDivision, status: 'active' },
-      });
-      projectIdMap.set(p.projectNo, proj.id);
+  // Neon serverless에서 긴 interactive transaction이 연결 종료로 실패하므로
+  // 순차 처리 방식으로 교체 (atomicity 포기, sync 재실행으로 복구 가능)
+
+  // 1. 프로젝트 upsert (개별 처리)
+  const projectIdMap = new Map<string, number>();
+  for (const p of projectRows.values()) {
+    const proj = await prisma.project.upsert({
+      where: { projectNo: p.projectNo },
+      update: { clientName: p.clientName, description: [...p.descriptions].join('\n') || null, businessDivision: p.businessDivision, status: 'active', updatedAt: new Date() },
+      create: { projectNo: p.projectNo, clientName: p.clientName, description: [...p.descriptions].join('\n') || null, businessDivision: p.businessDivision, status: 'active' },
+    });
+    projectIdMap.set(p.projectNo, proj.id);
+  }
+
+  // 2. 오래된 프로젝트 삭제
+  let deletedProjects = 0, deletedAssignments = 0;
+  if (replaceExisting) {
+    const staleProjects = await prisma.project.findMany({
+      where: { projectNo: { notIn: incomingProjectNos } },
+      select: { id: true },
+    });
+    if (staleProjects.length > 0) {
+      const staleIds = staleProjects.map(p => p.id);
+      await prisma.areaDemandSegment.deleteMany({ where: { assignment: { projectId: { in: staleIds } } } });
+      const del = await prisma.areaAssignment.deleteMany({ where: { projectId: { in: staleIds } } });
+      const delP = await prisma.project.deleteMany({ where: { id: { in: staleIds } } });
+      deletedAssignments = del.count;
+      deletedProjects = delP.count;
     }
+  }
 
-    // 오래된 프로젝트(스프레드시트에 없는) 삭제
-    let deletedProjects = 0, deletedAssignments = 0;
-    if (replaceExisting) {
-      const staleProjects = await tx.project.findMany({
-        where: { projectNo: { notIn: incomingProjectNos } },
-        select: { id: true },
-      });
-      if (staleProjects.length > 0) {
-        const staleIds = staleProjects.map(p => p.id);
-        await tx.areaDemandSegment.deleteMany({ where: { assignment: { projectId: { in: staleIds } } } });
-        const del = await tx.areaAssignment.deleteMany({ where: { projectId: { in: staleIds } } });
-        const delP = await tx.project.deleteMany({ where: { id: { in: staleIds } } });
-        deletedAssignments = del.count;
-        deletedProjects = delP.count;
-      }
-    }
+  // 3. 기존 배치 삭제 후 재삽입
+  const incomingIds = [...projectIdMap.values()];
+  await prisma.areaDemandSegment.deleteMany({ where: { assignment: { projectId: { in: incomingIds } } } });
+  await prisma.areaAssignment.deleteMany({ where: { projectId: { in: incomingIds } } });
 
-    // 기존 배치 전부 삭제 후 재삽입 (clean re-sync)
-    const incomingIds = [...projectIdMap.values()];
-    await tx.areaDemandSegment.deleteMany({ where: { assignment: { projectId: { in: incomingIds } } } });
-    await tx.areaAssignment.deleteMany({ where: { projectId: { in: incomingIds } } });
+  // 4. 배치 삽입 (청크 단위로 처리해 Neon 연결 안정성 확보)
+  const CHUNK = 50;
+  let assignmentsUpserted = 0;
+  for (let i = 0; i < valid.length; i += CHUNK) {
+    const chunk = valid.slice(i, i + CHUNK);
+    const created = await prisma.areaAssignment.createMany({
+      data: chunk.map(v => ({
+        projectId: projectIdMap.get(v.row.projectCode)!,
+        zoneId: v.zone.id,
+        startDate: v.startDate,
+        endDate: v.endDate,
+        requiredAreaSqm: v.requiredAreaSqm,
+        widthM: v.widthM,
+        heightM: v.heightM,
+        quantity: v.quantity,
+        marginRate: v.marginRate,
+        status: 'confirmed',
+      })),
+    });
+    assignmentsUpserted += created.count;
+  }
 
-    // 배치 삽입
-    let assignmentsUpserted = 0;
-    for (const v of valid) {
-      const projectId = projectIdMap.get(v.row.projectCode)!;
-      const assignment = await tx.areaAssignment.create({
-        data: {
-          projectId,
-          zoneId: v.zone.id,
-          startDate: v.startDate,
-          endDate: v.endDate,
-          requiredAreaSqm: v.requiredAreaSqm,
-          widthM: v.widthM,
-          heightM: v.heightM,
-          quantity: v.quantity,
-          marginRate: v.marginRate,
-          status: 'confirmed',
-        },
-      });
-
-      if (v.phase2) {
-        const p1End = new Date(v.phase2.startDate);
-        p1End.setDate(p1End.getDate() - 1);
-        await tx.areaDemandSegment.createMany({
-          data: [
-            { assignmentId: assignment.id, phaseNo: 1, startDate: v.startDate, endDate: p1End, widthM: v.widthM, heightM: v.heightM, quantity: v.quantity, marginRate: v.marginRate, calculatedAreaSqm: v.requiredAreaSqm },
-            { assignmentId: assignment.id, phaseNo: 2, startDate: v.phase2.startDate, endDate: v.phase2.endDate, widthM: v.phase2.widthM, heightM: v.phase2.heightM, quantity: v.phase2.quantity, marginRate: v.phase2.marginRate, calculatedAreaSqm: v.phase2.calculatedAreaSqm },
-          ],
-        });
-      }
-      assignmentsUpserted++;
-    }
-
-    return { deletedProjects, deletedAssignments, assignmentsUpserted };
-  });
+  const result = { deletedProjects, deletedAssignments, assignmentsUpserted };
 
   console.log(`sync: ${projectRows.size} projects, ${result.assignmentsUpserted} assignments, ${skipped} skipped, ${result.deletedProjects} stale deleted`);
   return {
