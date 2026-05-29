@@ -2,35 +2,30 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import {
-  getFactories,
-  getProjects,
-  createProject,
-  updateProject,
-  deleteProject,
-  createAssignment,
-  deleteAssignment,
+  getFactories, getProjects, createProject, deleteProject,
+  createAssignment, deleteAssignment, createProjectItem, deleteProjectItem,
   syncProjectsSheet,
 } from '../api/client';
-import type { Factory, Project, Assignment, ValidationResult, ProjectSyncResult } from '../api/client';
+import type { Factory, Project, ProjectItem, ValidationResult, ProjectSyncResult } from '../api/client';
 
-// ── 부하율 배지 ─────────────────────────────────────────
-function LoadBadge({ pct }: { pct: number }) {
-  const color = pct > 100 ? 'bg-red-100 text-red-700' : pct > 80 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700';
-  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>{pct.toFixed(1)}%</span>;
+const BU_OPTIONS = ['플랜트 BU', '방산 BU', '중공업 BU', '기타'];
+
+function calcArea(w: number, h: number, qty: number, mr: number) {
+  return w * h * qty * (1 + mr / 100);
 }
 
-// ── 충돌 경고 배너 ──────────────────────────────────────
+function LoadBadge({ pct }: { pct: number }) {
+  const cls = pct > 100 ? 'bg-red-100 text-red-700' : pct > 80 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700';
+  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cls}`}>{pct.toFixed(1)}%</span>;
+}
+
 function ConflictBanner({ v, onForce, onCancel }: { v: ValidationResult; onForce: () => void; onCancel: () => void }) {
   return (
     <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
       <p className="font-semibold text-red-700 text-sm mb-1">⚠ 면적 초과 경고</p>
-      <p className="text-xs text-red-600 mb-2">
-        최대 부하율 <strong>{v.maxLoadRate.toFixed(1)}%</strong> — 초과 일수 {v.conflictDays.length}일
-      </p>
+      <p className="text-xs text-red-600 mb-2">최대 부하율 <strong>{v.maxLoadRate.toFixed(1)}%</strong> — 초과 일수 {v.conflictDays.length}일</p>
       <div className="flex flex-wrap gap-1 mb-3 max-h-20 overflow-y-auto">
-        {v.conflictDays.slice(0, 20).map((d) => (
-          <span key={d.date} className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">{d.date}</span>
-        ))}
+        {v.conflictDays.slice(0, 20).map(d => <span key={d.date} className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">{d.date}</span>)}
         {v.conflictDays.length > 20 && <span className="text-xs text-red-400">+{v.conflictDays.length - 20}일</span>}
       </div>
       <div className="flex gap-2">
@@ -41,14 +36,8 @@ function ConflictBanner({ v, onForce, onCancel }: { v: ValidationResult; onForce
   );
 }
 
-// ── 배치 등록 폼 ────────────────────────────────────────
-interface AssignmentFormProps {
-  projectId: number;
-  factories: Factory[];
-  onClose: () => void;
-}
-
-function AssignmentForm({ projectId, factories, onClose }: AssignmentFormProps) {
+// ── 배치 등록 폼 ───────────────────────────────────────────────────
+function AssignmentForm({ projectId, factories, onClose }: { projectId: number; factories: Factory[]; onClose: () => void }) {
   const qc = useQueryClient();
   const [factoryId, setFactoryId] = useState('');
   const [zoneId, setZoneId] = useState('');
@@ -56,29 +45,39 @@ function AssignmentForm({ projectId, factories, onClose }: AssignmentFormProps) 
   const [end, setEnd] = useState('');
   const [width, setWidth] = useState('');
   const [height, setHeight] = useState('');
+  const [quantity, setQuantity] = useState('1');
+  const [marginRate, setMarginRate] = useState('0');
   const [notes, setNotes] = useState('');
+  // 2구간
+  const [use2Phase, setUse2Phase] = useState(false);
+  const [p2Start, setP2Start] = useState('');
+  const [p2End, setP2End] = useState('');
+  const [p2Width, setP2Width] = useState('');
+  const [p2Height, setP2Height] = useState('');
+  const [p2Qty, setP2Qty] = useState('1');
+
   const [conflict, setConflict] = useState<ValidationResult | null>(null);
   const [error, setError] = useState('');
 
-  const selectedFactory = factories.find((f) => f.id === Number(factoryId));
-  const zones = selectedFactory?.zones.filter((z) => z.isActive) ?? [];
-  const selectedZone = zones.find((z) => z.id === Number(zoneId));
-
-  const computedArea = width && height ? Number(width) * Number(height) : 0;
+  const selectedFactory = factories.find(f => f.id === Number(factoryId));
+  const zones = selectedFactory?.zones.filter(z => z.isActive) ?? [];
+  const selectedZone = zones.find(z => z.id === Number(zoneId));
+  const w = Number(width), h = Number(height), qty = Number(quantity), mr = Number(marginRate);
+  const computedArea = w && h ? calcArea(w, h, qty, mr) : 0;
+  const p2W = Number(p2Width), p2H = Number(p2Height), p2Q = Number(p2Qty);
+  const computedArea2 = p2W && p2H ? calcArea(p2W, p2H, p2Q, mr) : 0;
 
   const submit = async (force = false) => {
-    if (!computedArea) return;
+    if (!computedArea || !zoneId || !start || !end) return;
     setError('');
     try {
       await createAssignment(projectId, {
-        zoneId: Number(zoneId),
-        startDate: start,
-        endDate: end,
-        requiredAreaSqm: computedArea,
-        widthM: Number(width),
-        heightM: Number(height),
-        notes: notes || undefined,
-        force,
+        zoneId: Number(zoneId), startDate: start, endDate: end,
+        widthM: w, heightM: h, quantity: qty, marginRate: mr,
+        notes: notes || undefined, force: force || undefined,
+        ...(use2Phase && p2Width && p2Height && p2Start && p2End ? {
+          phase2Start: p2Start, phase2End: p2End, phase2Width: p2W, phase2Height: p2H, phase2Quantity: p2Q,
+        } : {}),
       });
       qc.invalidateQueries({ queryKey: ['projects'] });
       onClose();
@@ -93,298 +92,424 @@ function AssignmentForm({ projectId, factories, onClose }: AssignmentFormProps) 
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-[480px] shadow-xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg p-6 w-[540px] shadow-xl max-h-[90vh] overflow-y-auto">
         <h3 className="font-semibold text-base mb-4">면적 배치 등록</h3>
-
-        {conflict && (
-          <ConflictBanner v={conflict} onForce={() => submit(true)} onCancel={() => setConflict(null)} />
-        )}
-
+        {conflict && <ConflictBanner v={conflict} onForce={() => submit(true)} onCancel={() => setConflict(null)} />}
         {error && <p className="text-red-500 text-sm mb-3">{error}</p>}
 
         <div className="space-y-3">
-          <select className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={factoryId} onChange={(e) => { setFactoryId(e.target.value); setZoneId(''); }}>
+          <select className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={factoryId} onChange={e => { setFactoryId(e.target.value); setZoneId(''); }}>
             <option value="">공장 선택</option>
-            {factories.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            {factories.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
-          <select className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={zoneId} onChange={(e) => setZoneId(e.target.value)} disabled={!factoryId}>
+          <select className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={zoneId} onChange={e => setZoneId(e.target.value)} disabled={!factoryId}>
             <option value="">구역 선택</option>
-            {zones.map((z) => (
-              <option key={z.id} value={z.id}>{z.name} ({z.availableAreaSqm.toLocaleString()}㎡)</option>
-            ))}
+            {zones.map(z => <option key={z.id} value={z.id}>{z.name} ({z.availableAreaSqm.toLocaleString()}㎡)</option>)}
           </select>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">시작일</label>
-              <input type="date" className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={start} onChange={(e) => setStart(e.target.value)} />
+            <div><label className="text-xs text-gray-500 mb-1 block">시작일</label>
+              <input type="date" className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={start} onChange={e => setStart(e.target.value)} />
             </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">종료일</label>
-              <input type="date" className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={end} onChange={(e) => setEnd(e.target.value)} />
+            <div><label className="text-xs text-gray-500 mb-1 block">종료일</label>
+              <input type="date" className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={end} onChange={e => setEnd(e.target.value)} />
             </div>
           </div>
 
-          {/* 가로 × 세로 → 면적 */}
-          <div>
-            <label className="text-xs text-gray-500 mb-1 block">필요 면적 (가로 × 세로)</label>
+          {/* 가로 × 세로 × 수량 × 여유율 */}
+          <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+            <label className="text-xs font-medium text-gray-600 block">아이템 면적 계산 (1구간)</label>
             <div className="flex items-center gap-2">
-              <input
-                type="number" min="0" step="0.1"
-                className="flex-1 border border-gray-200 rounded-md px-3 py-2 text-sm"
-                placeholder="가로 (m)"
-                value={width}
-                onChange={(e) => setWidth(e.target.value)}
-              />
-              <span className="text-gray-400 font-bold">×</span>
-              <input
-                type="number" min="0" step="0.1"
-                className="flex-1 border border-gray-200 rounded-md px-3 py-2 text-sm"
-                placeholder="세로 (m)"
-                value={height}
-                onChange={(e) => setHeight(e.target.value)}
-              />
-              <span className="text-gray-400">=</span>
-              <div className="w-24 text-right">
-                <span className={`text-sm font-bold ${computedArea > 0 ? 'text-blue-600' : 'text-gray-300'}`}>
-                  {computedArea > 0 ? `${computedArea.toLocaleString()}㎡` : '—'}
-                </span>
+              <div className="flex-1">
+                <label className="text-xs text-gray-400">가로 (m)</label>
+                <input type="number" min="0" step="0.1" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" placeholder="12.0" value={width} onChange={e => setWidth(e.target.value)} />
+              </div>
+              <span className="text-gray-400 mt-4">×</span>
+              <div className="flex-1">
+                <label className="text-xs text-gray-400">세로 (m)</label>
+                <input type="number" min="0" step="0.1" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" placeholder="10.0" value={height} onChange={e => setHeight(e.target.value)} />
+              </div>
+              <span className="text-gray-400 mt-4">×</span>
+              <div className="w-16">
+                <label className="text-xs text-gray-400">수량</label>
+                <input type="number" min="1" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={quantity} onChange={e => setQuantity(e.target.value)} />
+              </div>
+              <div className="w-20">
+                <label className="text-xs text-gray-400">여유율(%)</label>
+                <input type="number" min="0" max="100" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={marginRate} onChange={e => setMarginRate(e.target.value)} />
               </div>
             </div>
+            {computedArea > 0 && (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-500">총 점유면적 = {w}×{h}×{qty}×(1+{mr}%) =</span>
+                <span className="font-bold text-blue-600">{computedArea.toFixed(1)}㎡</span>
+              </div>
+            )}
             {selectedZone && computedArea > 0 && (
-              <div className="mt-1.5 flex items-center gap-2 text-xs">
-                <span className="text-gray-400">가용 {selectedZone.availableAreaSqm.toLocaleString()}㎡ 중</span>
-                <span className={`font-medium ${computedArea > selectedZone.availableAreaSqm ? 'text-red-600' : 'text-green-600'}`}>
+              <div className="text-xs text-gray-400">
+                가용 {selectedZone.availableAreaSqm.toLocaleString()}㎡ 중{' '}
+                <span className={computedArea > selectedZone.availableAreaSqm ? 'text-red-600 font-medium' : 'text-green-600 font-medium'}>
                   {((computedArea / selectedZone.availableAreaSqm) * 100).toFixed(1)}% 점유
                 </span>
-                {/* Mini proportional bar */}
-                <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${computedArea > selectedZone.availableAreaSqm ? 'bg-red-500' : 'bg-green-400'}`}
-                    style={{ width: `${Math.min((computedArea / selectedZone.availableAreaSqm) * 100, 100)}%` }}
-                  />
-                </div>
               </div>
             )}
           </div>
 
-          <input className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" placeholder="비고 (선택)" value={notes} onChange={(e) => setNotes(e.target.value)} />
+          {/* 2구간 토글 */}
+          <div>
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
+              <input type="checkbox" checked={use2Phase} onChange={e => setUse2Phase(e.target.checked)} className="rounded" />
+              <span>2구간 사용 (조립 후반 면적 축소)</span>
+            </label>
+          </div>
+
+          {use2Phase && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+              <label className="text-xs font-medium text-blue-700 block">2구간 · 조립 후반 (축소면적)</label>
+              <div className="grid grid-cols-2 gap-2">
+                <div><label className="text-xs text-gray-400">시작일</label>
+                  <input type="date" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={p2Start} onChange={e => setP2Start(e.target.value)} />
+                </div>
+                <div><label className="text-xs text-gray-400">종료일</label>
+                  <input type="date" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={p2End} onChange={e => setP2End(e.target.value)} />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1"><label className="text-xs text-gray-400">가로 (m)</label>
+                  <input type="number" min="0" step="0.1" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={p2Width} onChange={e => setP2Width(e.target.value)} />
+                </div>
+                <span className="text-gray-400 mt-4">×</span>
+                <div className="flex-1"><label className="text-xs text-gray-400">세로 (m)</label>
+                  <input type="number" min="0" step="0.1" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={p2Height} onChange={e => setP2Height(e.target.value)} />
+                </div>
+                <div className="w-16"><label className="text-xs text-gray-400">수량</label>
+                  <input type="number" min="1" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={p2Qty} onChange={e => setP2Qty(e.target.value)} />
+                </div>
+              </div>
+              {computedArea2 > 0 && (
+                <div className="text-sm flex justify-between">
+                  <span className="text-gray-500">2구간 면적</span>
+                  <span className="font-bold text-blue-600">{computedArea2.toFixed(1)}㎡</span>
+                </div>
+              )}
+              {computedArea > 0 && computedArea2 > 0 && (
+                <p className="text-xs text-blue-600">면적 {((1 - computedArea2/computedArea)*100).toFixed(0)}% 감소 (간트에서 분할 바로 표시됩니다)</p>
+              )}
+            </div>
+          )}
+
+          <textarea className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm resize-none" rows={2} placeholder="비고 (선택)" value={notes} onChange={e => setNotes(e.target.value)} />
         </div>
 
-        <div className="flex gap-2 justify-end mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md">취소</button>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
           <button
+            disabled={!computedArea || !zoneId || !start || !end}
             onClick={() => submit(false)}
-            disabled={!zoneId || !start || !end || !computedArea}
-            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-          >
-            등록
-          </button>
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >등록</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── 프로젝트 폼 ─────────────────────────────────────────
-interface ProjectFormProps {
-  project?: Project;
-  onClose: () => void;
-}
-
-function ProjectForm({ project, onClose }: ProjectFormProps) {
+// ── 아이템 등록 폼 ─────────────────────────────────────────────────
+function ItemForm({ projectId, onClose }: { projectId: number; onClose: () => void }) {
   const qc = useQueryClient();
-  const [no, setNo] = useState(project?.projectNo ?? '');
-  const [client, setClient] = useState(project?.clientName ?? '');
-  const [desc, setDesc] = useState(project?.description ?? '');
+  const [itemName, setItemName] = useState('');
+  const [itemCategory, setItemCategory] = useState('');
+  const [width, setWidth] = useState('');
+  const [height, setHeight] = useState('');
+  const [quantity, setQuantity] = useState('1');
+  const [marginRate, setMarginRate] = useState('0');
   const [error, setError] = useState('');
 
-  const onError = (e: unknown) => {
-    const msg = axios.isAxiosError(e)
-      ? (e.response?.data as { error?: string })?.error ?? e.message
-      : '저장 실패';
-    setError(msg.includes('Unique') || msg.includes('unique') ? '이미 존재하는 프로젝트 번호입니다' : `오류: ${msg}`);
+  const w = Number(width), h = Number(height), qty = Number(quantity), mr = Number(marginRate);
+  const unitArea = w && h ? w * h : 0;
+  const totalArea = unitArea ? calcArea(w, h, qty, mr) : 0;
+
+  const submit = async () => {
+    if (!itemName || !w || !h) return;
+    setError('');
+    try {
+      await createProjectItem(projectId, { itemName, itemCategory: itemCategory || undefined, widthM: w, heightM: h, quantity: qty, marginRate: mr });
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      onClose();
+    } catch {
+      setError('등록 실패');
+    }
   };
-
-  const createMut = useMutation({
-    mutationFn: () => createProject({ projectNo: no, clientName: client || undefined, description: desc || undefined }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); onClose(); },
-    onError,
-  });
-  const updateMut = useMutation({
-    mutationFn: () => updateProject(project!.id, { clientName: client || undefined, description: desc || undefined }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); onClose(); },
-    onError,
-  });
-
-  const submit = () => { setError(''); project ? updateMut.mutate() : createMut.mutate(); };
-  const isPending = createMut.isPending || updateMut.isPending;
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-96 shadow-xl">
-        <h3 className="font-semibold text-base mb-4">{project ? '프로젝트 편집' : '프로젝트 등록'}</h3>
-        {error && <p className="text-red-500 text-sm mb-3 bg-red-50 rounded px-3 py-2">{error}</p>}
+      <div className="bg-white rounded-lg p-6 w-[440px] shadow-xl">
+        <h3 className="font-semibold text-base mb-4">아이템 등록</h3>
+        {error && <p className="text-red-500 text-sm mb-3">{error}</p>}
         <div className="space-y-3">
-          <input disabled={!!project} className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm disabled:bg-gray-50" placeholder="프로젝트 번호 *" value={no} onChange={(e) => setNo(e.target.value)} />
-          <input className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" placeholder="고객사명" value={client} onChange={(e) => setClient(e.target.value)} />
-          <textarea className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" rows={2} placeholder="설명 (선택)" value={desc} onChange={(e) => setDesc(e.target.value)} />
+          <input className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" placeholder="아이템명 (예: 대형 열교환기 A)" value={itemName} onChange={e => setItemName(e.target.value)} />
+          <input className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" placeholder="분류 (예: 열교환기, 선택)" value={itemCategory} onChange={e => setItemCategory(e.target.value)} />
+          <div className="flex items-center gap-2">
+            <div className="flex-1"><label className="text-xs text-gray-400">가로 (m)</label>
+              <input type="number" min="0" step="0.1" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={width} onChange={e => setWidth(e.target.value)} />
+            </div>
+            <span className="text-gray-400 mt-4">×</span>
+            <div className="flex-1"><label className="text-xs text-gray-400">세로 (m)</label>
+              <input type="number" min="0" step="0.1" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={height} onChange={e => setHeight(e.target.value)} />
+            </div>
+            <div className="w-16"><label className="text-xs text-gray-400">수량</label>
+              <input type="number" min="1" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={quantity} onChange={e => setQuantity(e.target.value)} />
+            </div>
+            <div className="w-20"><label className="text-xs text-gray-400">여유율(%)</label>
+              <input type="number" min="0" max="100" className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm" value={marginRate} onChange={e => setMarginRate(e.target.value)} />
+            </div>
+          </div>
+          {totalArea > 0 && (
+            <div className="flex justify-between text-sm bg-blue-50 rounded-md px-3 py-2">
+              <span className="text-gray-500">단위면적: {unitArea.toFixed(1)}㎡ × {qty} × (1+{mr}%)</span>
+              <span className="font-bold text-blue-600">= {totalArea.toFixed(1)}㎡</span>
+            </div>
+          )}
         </div>
-        <div className="flex gap-2 justify-end mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md">취소</button>
-          <button onClick={submit} disabled={!no.trim() || isPending} className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
-            {isPending ? '저장 중…' : '저장'}
-          </button>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
+          <button disabled={!itemName || !w || !h} onClick={submit} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">등록</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── 배치 목록 행 ────────────────────────────────────────
-function AssignmentRow({ a, onDelete }: { a: Assignment; onDelete: () => void }) {
-  const days = Math.round((new Date(a.endDate).getTime() - new Date(a.startDate).getTime()) / 86400000) + 1;
-  const dimStr = a.widthM && a.heightM ? `${a.widthM}m × ${a.heightM}m = ` : '';
+// ── 프로젝트 카드 ──────────────────────────────────────────────────
+function ProjectCard({ project, factories }: { project: Project; factories: Factory[] }) {
+  const qc = useQueryClient();
+  const [showAssignForm, setShowAssignForm] = useState(false);
+  const [showItemForm, setShowItemForm] = useState(false);
+
+  const deleteMut = useMutation({ mutationFn: () => deleteProject(project.id), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+  const deleteAssignMut = useMutation({ mutationFn: (id: number) => deleteAssignment(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+  const deleteItemMut = useMutation({ mutationFn: (id: number) => deleteProjectItem(project.id, id), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+
+  const totalArea = project.assignments.reduce((s, a) => s + a.requiredAreaSqm, 0);
+
   return (
-    <div className="flex items-center justify-between text-xs text-gray-600 bg-gray-50 rounded px-3 py-2 mt-1">
-      <span className="font-medium text-gray-800">{a.zone.factory.name} / {a.zone.name}</span>
-      <span>{a.startDate.slice(0, 10)} ~ {a.endDate.slice(0, 10)} ({days}일)</span>
-      <span className="text-gray-500">{dimStr}<span className="font-medium text-gray-700">{a.requiredAreaSqm.toLocaleString()}㎡</span></span>
-      <LoadBadge pct={(a.requiredAreaSqm / a.zone.availableAreaSqm) * 100} />
-      <button onClick={onDelete} className="text-red-400 hover:text-red-600 ml-2">✕</button>
+    <div className="bg-white rounded-xl border border-gray-200 p-4">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-gray-800">{project.projectNo}</span>
+            {project.businessDivision && (
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{project.businessDivision}</span>
+            )}
+            <span className={`text-xs px-2 py-0.5 rounded-full ${project.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{project.status}</span>
+          </div>
+          {project.clientName && <p className="text-sm text-gray-500 mt-0.5">{project.clientName}</p>}
+          {project.description && <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{project.description}</p>}
+        </div>
+        <button onClick={() => { if (confirm(`프로젝트 "${project.projectNo}"을 삭제하시겠습니까?`)) deleteMut.mutate(); }} className="text-gray-300 hover:text-red-400 text-lg leading-none">×</button>
+      </div>
+
+      {/* 배치 목록 */}
+      {project.assignments.length > 0 && (
+        <div className="space-y-1.5 mb-3">
+          {project.assignments.map(a => {
+            const hasSegments = a.segments.length > 0;
+            return (
+              <div key={a.id} className="flex items-center gap-2 text-xs bg-gray-50 rounded-md px-3 py-1.5">
+                <span className="font-medium text-gray-700">{a.zone.factory.name} / {a.zone.name}</span>
+                <span className="text-gray-400">{a.startDate.slice(0, 10)} ~ {a.endDate.slice(0, 10)}</span>
+                {a.widthM && a.heightM && (
+                  <span className="text-gray-500">{a.widthM}×{a.heightM}m{a.quantity && a.quantity > 1 ? `×${a.quantity}` : ''}</span>
+                )}
+                <span className="font-medium text-blue-600">{a.requiredAreaSqm.toLocaleString()}㎡</span>
+                {hasSegments && (
+                  <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-xs">2구간</span>
+                )}
+                <button onClick={() => deleteAssignMut.mutate(a.id)} className="ml-auto text-gray-300 hover:text-red-400">×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 아이템 목록 */}
+      {project.items.length > 0 && (
+        <div className="space-y-1 mb-3 border-t border-gray-100 pt-2">
+          <p className="text-xs text-gray-400 mb-1">아이템 ({project.items.length})</p>
+          {project.items.map((item: ProjectItem) => (
+            <div key={item.id} className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="font-medium">{item.itemName}</span>
+              <span className="text-gray-400">{item.widthM}×{item.heightM}m × {item.quantity}</span>
+              <span className="text-blue-600 font-medium">{item.totalAreaSqm.toFixed(1)}㎡</span>
+              <button onClick={() => deleteItemMut.mutate(item.id)} className="ml-auto text-gray-300 hover:text-red-400">×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+        <div className="flex items-center gap-2">
+          {totalArea > 0 && <span className="text-xs text-gray-500">총 배치면적 <strong>{Math.round(totalArea).toLocaleString()}㎡</strong></span>}
+          {project.assignments.length > 0 && (
+            <LoadBadge pct={project.assignments[0].zone ? (project.assignments[0].requiredAreaSqm / project.assignments[0].zone.availableAreaSqm) * 100 : 0} />
+          )}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => setShowItemForm(true)} className="text-xs px-2.5 py-1 border border-gray-200 rounded-md hover:bg-gray-50">+ 아이템</button>
+          <button onClick={() => setShowAssignForm(true)} className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700">+ 배치</button>
+        </div>
+      </div>
+
+      {showAssignForm && <AssignmentForm projectId={project.id} factories={factories} onClose={() => setShowAssignForm(false)} />}
+      {showItemForm && <ItemForm projectId={project.id} onClose={() => setShowItemForm(false)} />}
     </div>
   );
 }
 
-// ── 메인 페이지 ─────────────────────────────────────────
+// ── 프로젝트 생성 폼 ───────────────────────────────────────────────
+function CreateProjectForm({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const [projectNo, setProjectNo] = useState('');
+  const [clientName, setClientName] = useState('');
+  const [businessDivision, setBusinessDivision] = useState('');
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = async () => {
+    if (!projectNo) return;
+    setError('');
+    try {
+      await createProject({ projectNo, clientName: clientName || undefined, businessDivision: businessDivision || undefined, description: description || undefined });
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      onClose();
+    } catch {
+      setError('프로젝트 생성 실패 (중복 번호 확인)');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-[420px] shadow-xl">
+        <h3 className="font-semibold text-base mb-4">신규 프로젝트 등록</h3>
+        {error && <p className="text-red-500 text-sm mb-3">{error}</p>}
+        <div className="space-y-3">
+          <input className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" placeholder="프로젝트 번호 (예: PRJ-2025-001)" value={projectNo} onChange={e => setProjectNo(e.target.value)} />
+          <input className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" placeholder="발주처 (선택)" value={clientName} onChange={e => setClientName(e.target.value)} />
+          <select className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm" value={businessDivision} onChange={e => setBusinessDivision(e.target.value)}>
+            <option value="">사업부문 선택 (선택)</option>
+            {BU_OPTIONS.map(bu => <option key={bu} value={bu}>{bu}</option>)}
+          </select>
+          <textarea className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm resize-none" rows={2} placeholder="설명 (선택)" value={description} onChange={e => setDescription(e.target.value)} />
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
+          <button disabled={!projectNo} onClick={submit} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">생성</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 동기화 결과 배너 ───────────────────────────────────────────────
+function SyncResultBanner({ result, onClose }: { result: ProjectSyncResult; onClose: () => void }) {
+  const isOk = result.source === 'sheets';
+  return (
+    <div className={`rounded-lg p-4 mb-4 border ${isOk ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+      <div className="flex justify-between items-start">
+        <div>
+          <p className={`font-semibold text-sm ${isOk ? 'text-green-700' : 'text-red-700'}`}>
+            {isOk ? '✓ Google Sheets 동기화 완료' : '✗ 동기화 실패'}
+          </p>
+          {isOk ? (
+            <p className="text-xs text-green-600 mt-1">
+              프로젝트 {result.projectsUpserted}건 · 배치 {result.assignmentsUpserted}건 처리
+              {result.skipped > 0 && ` · 스킵 ${result.skipped}건`}
+              {result.projectsDeleted ? ` · 삭제 ${result.projectsDeleted}건` : ''}
+            </p>
+          ) : (
+            <p className="text-xs text-red-600 mt-1">{result.error}</p>
+          )}
+          {result.skippedByReason && Object.keys(result.skippedByReason).length > 0 && (
+            <div className="mt-2 text-xs text-gray-500">
+              {Object.entries(result.skippedByReason).map(([k, v]) => <span key={k} className="mr-3">{k}: {v}건</span>)}
+            </div>
+          )}
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 ml-4">×</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ──────────────────────────────────────────────────────
 export default function ProjectsPage() {
   const qc = useQueryClient();
+  const [showCreate, setShowCreate] = useState(false);
+  const [syncResult, setSyncResult] = useState<ProjectSyncResult | null>(null);
+  const [search, setSearch] = useState('');
+  const [buFilter, setBuFilter] = useState('');
+
   const { data: projects = [], isLoading } = useQuery({ queryKey: ['projects'], queryFn: getProjects });
   const { data: factories = [] } = useQuery({ queryKey: ['factories'], queryFn: getFactories });
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [projectForm, setProjectForm] = useState<{ open: boolean; project?: Project }>({ open: false });
-  const [assignForm, setAssignForm] = useState<{ open: boolean; projectId: number }>({ open: false, projectId: 0 });
-  const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const syncMut = useMutation({
     mutationFn: syncProjectsSheet,
-    onSuccess: (r: ProjectSyncResult) => {
-      qc.invalidateQueries({ queryKey: ['projects'] });
-      if (r.source === 'error') {
-        setSyncMsg({ ok: false, text: `동기화 실패: ${r.error ?? '시트에 접근할 수 없습니다. 시트를 "링크가 있는 모든 사용자" 보기 권한으로 공유해주세요.'}` });
-      } else {
-        const deletedText = r.projectsDeleted ? `, 삭제 ${r.projectsDeleted}건` : '';
-        const serverSkipText = r.skippedByReason
-          ? ` · 서버 스킵: ${Object.entries(r.skippedByReason).map(([reason, count]) => `${reason} ${count}`).join(', ')}`
-          : '';
-        setSyncMsg({ ok: true, text: `동기화 완료 — 프로젝트 ${r.projectsUpserted}건, 배치 ${r.assignmentsUpserted}건${deletedText} (건너뜀 ${r.skipped}행)${serverSkipText}` });
-      }
-    },
-    onError: () => setSyncMsg({ ok: false, text: '동기화 실패. 서버 로그를 확인하세요.' }),
+    onSuccess: result => { setSyncResult(result); qc.invalidateQueries({ queryKey: ['projects'] }); },
   });
 
-  const delProject = useMutation({
-    mutationFn: deleteProject,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
-    onError: () => alert('삭제 실패. 잠시 후 다시 시도하세요.'),
+  const allBUs = [...new Set(projects.map(p => p.businessDivision).filter(Boolean) as string[])].sort();
+
+  const filtered = projects.filter(p => {
+    const matchSearch = !search || p.projectNo.toLowerCase().includes(search.toLowerCase()) || (p.clientName ?? '').toLowerCase().includes(search.toLowerCase());
+    const matchBU = !buFilter || p.businessDivision === buFilter;
+    return matchSearch && matchBU;
   });
-  const delAssign = useMutation({
-    mutationFn: deleteAssignment,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
-    onError: () => alert('배치 삭제 실패. 잠시 후 다시 시도하세요.'),
-  });
-
-  const toggle = (id: number) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-
-  if (isLoading) return <p className="text-gray-400 mt-10 text-center">불러오는 중…</p>;
-
-  const statusLabel: Record<string, string> = { active: '진행중', completed: '완료', cancelled: '취소' };
-  const statusColor: Record<string, string> = { active: 'bg-blue-50 text-blue-700', completed: 'bg-green-50 text-green-700', cancelled: 'bg-gray-100 text-gray-500' };
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-xl font-bold text-gray-800">프로젝트 관리</h1>
-        <div className="flex gap-2">
-          <button
-            onClick={() => { setSyncMsg(null); syncMut.mutate(); }}
-            disabled={syncMut.isPending}
-            className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 disabled:opacity-50"
-          >
-            {syncMut.isPending ? '동기화 중…' : '구글 시트 동기화'}
-          </button>
-          <button onClick={() => setProjectForm({ open: true })} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
-            + 프로젝트 등록
-          </button>
-        </div>
-      </div>
-
-      {syncMsg && (
-        <div className={`mb-4 px-4 py-3 rounded-lg text-sm flex justify-between items-center ${syncMsg.ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-          <span>{syncMsg.text}</span>
-          <button onClick={() => setSyncMsg(null)} className="ml-4 text-gray-400 hover:text-gray-600">✕</button>
-        </div>
-      )}
-
-      {projects.length === 0 && (
-        <div className="text-center py-16 text-gray-400">
-          <p className="text-lg mb-2">등록된 프로젝트가 없습니다</p>
-          <p className="text-sm">+ 프로젝트 등록 버튼으로 시작하세요</p>
-        </div>
-      )}
-
-      <div className="space-y-3">
-        {projects.map((p) => (
-          <div key={p.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <div
-              className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
-              onClick={() => toggle(p.id)}
-            >
-              <div className="flex items-center gap-3">
-                <span className="text-gray-400 text-sm">{expanded.has(p.id) ? '▼' : '▶'}</span>
-                <span className="font-semibold text-gray-800">{p.projectNo}</span>
-                {p.clientName && <span className="text-sm text-gray-500">{p.clientName}</span>}
-                <span className={`text-xs px-2 py-0.5 rounded-full ${statusColor[p.status] ?? 'bg-gray-100 text-gray-500'}`}>
-                  {statusLabel[p.status] ?? p.status}
-                </span>
-                <span className="text-xs text-gray-400">배치 {p.assignments.length}건</span>
-              </div>
-              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                <button onClick={() => setAssignForm({ open: true, projectId: p.id })} className="text-blue-500 hover:underline text-xs">+배치</button>
-                <button onClick={() => setProjectForm({ open: true, project: p })} className="text-blue-500 hover:underline text-xs">편집</button>
-                <button onClick={() => { if (confirm(`${p.projectNo}을 삭제할까요?`)) delProject.mutate(p.id); }} className="text-red-400 hover:underline text-xs">삭제</button>
-              </div>
-            </div>
-
-            {expanded.has(p.id) && (
-              <div className="px-4 pb-4 border-t border-gray-100">
-                {p.description && <p className="text-xs text-gray-500 mt-2 mb-2">{p.description}</p>}
-                {p.assignments.length === 0 ? (
-                  <p className="text-xs text-gray-400 py-3 text-center">배치 없음 — +배치 버튼으로 면적을 등록하세요</p>
-                ) : (
-                  p.assignments.map((a) => (
-                    <AssignmentRow
-                      key={a.id}
-                      a={a}
-                      onDelete={() => { if (confirm('배치를 삭제할까요?')) delAssign.mutate(a.id); }}
-                    />
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {projectForm.open && (
-        <ProjectForm project={projectForm.project} onClose={() => setProjectForm({ open: false })} />
-      )}
-      {assignForm.open && (
-        <AssignmentForm
-          projectId={assignForm.projectId}
-          factories={factories}
-          onClose={() => setAssignForm({ open: false, projectId: 0 })}
+      {/* Header */}
+      <div className="flex flex-wrap gap-3 items-center mb-5">
+        <input
+          type="text"
+          placeholder="프로젝트 번호 / 발주처 검색"
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-56"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
         />
+        {allBUs.length > 0 && (
+          <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm" value={buFilter} onChange={e => setBuFilter(e.target.value)}>
+            <option value="">전체 사업부문</option>
+            {allBUs.map(bu => <option key={bu} value={bu}>{bu}</option>)}
+          </select>
+        )}
+        <button onClick={() => setShowCreate(true)} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">+ 프로젝트 등록</button>
+        <button
+          onClick={() => syncMut.mutate()}
+          disabled={syncMut.isPending}
+          className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+        >
+          {syncMut.isPending ? '동기화 중…' : '↻ Sheets 동기화'}
+        </button>
+        <span className="text-xs text-gray-400 ml-auto">총 {filtered.length}건</span>
+      </div>
+
+      {syncResult && <SyncResultBanner result={syncResult} onClose={() => setSyncResult(null)} />}
+
+      {isLoading && <p className="text-gray-400 text-center py-20">로딩 중…</p>}
+
+      {!isLoading && filtered.length === 0 && (
+        <div className="text-center py-20 text-gray-400">
+          <p className="text-lg mb-1">등록된 프로젝트가 없습니다</p>
+          <p className="text-sm">Google Sheets 동기화 또는 수동 등록으로 프로젝트를 추가하세요</p>
+        </div>
       )}
+
+      <div className="grid gap-4">
+        {filtered.map(p => <ProjectCard key={p.id} project={p} factories={factories} />)}
+      </div>
+
+      {showCreate && <CreateProjectForm onClose={() => setShowCreate(false)} />}
     </div>
   );
 }

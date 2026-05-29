@@ -10,21 +10,37 @@ export interface ProjectSyncResult {
   projectsDeleted?: number;
   assignmentsDeleted?: number;
   skippedByReason?: Record<string, number>;
-  skippedSamples?: Array<{ reason: string; projectCode?: string; shopName?: string; zoneName?: string; dimensions?: string }>;
+  skippedSamples?: Array<{
+    reason: string;
+    projectCode?: string;
+    shopName?: string;
+    zoneName?: string;
+    dimensions?: string;
+  }>;
   error?: string;
 }
 
 export interface ProjectRow {
   projectCode: string;
-  division?: string;
+  division?: string;       // 사업부문 (BU)
   client?: string;
   item?: string;
   productGroup?: string;
   shopName: string;
   endDate: string;
   startDate: string;
-  dimensions?: string;
+  // Phase 1 (or single-phase)
+  widthM?: string;
+  heightM?: string;
+  quantity?: string;
+  marginRate?: string;     // % value string e.g. "10"
   zoneName: string;
+  // Phase 2 (optional)
+  phase2Start?: string;
+  phase2End?: string;
+  phase2Width?: string;
+  phase2Height?: string;
+  phase2Quantity?: string;
 }
 
 interface UpsertProjectRowsOptions {
@@ -46,10 +62,9 @@ function parseCSVRow(line: string): string[] {
 
 function getSheetFetchErrorMessage(err: unknown): string {
   if (!axios.isAxiosError(err)) return (err as Error).message;
-
   const status = err.response?.status;
   if (status === 401 || status === 403) {
-    return 'Google Sheets 접근 권한이 없습니다. 시트를 "링크가 있는 모든 사용자 보기 가능"으로 공유하거나, 스프레드시트의 Apps Script에서 FLAS로 전송하세요.';
+    return 'Google Sheets 접근 권한이 없습니다. 시트를 "링크가 있는 모든 사용자 보기 가능"으로 공유하거나, Apps Script에서 FLAS로 전송하세요.';
   }
   if (status === 400 || status === 404) {
     return `Google Sheets 탭을 찾을 수 없습니다. GOOGLE_PROJECT_SHEET_GID=${PROJECT_SHEET_GID} 값과 삭제된 탭 여부를 확인하세요.`;
@@ -57,33 +72,72 @@ function getSheetFetchErrorMessage(err: unknown): string {
   return err.message;
 }
 
-function parseDimensions(raw: string): { widthM: number; heightM: number; areaSqm: number } | null {
-  const normalized = raw.trim().replace(/,/g, '').replace(/[X×＊*]/g, 'x');
-  const m = normalized.match(/^([\d.]+)\s*x\s*([\d.]+)$/);
+// "20.5 x 18" 또는 "20.5x18" → { widthM, heightM }
+function parseDimPair(raw: string): { w: number; h: number } | null {
+  const n = raw.trim().replace(/,/g, '').replace(/[X×＊*]/gi, 'x');
+  const m = n.match(/^([\d.]+)\s*x\s*([\d.]+)$/);
   if (!m) return null;
   let w = parseFloat(m[1]);
   let h = parseFloat(m[2]);
   if (!w || !h) return null;
-  if (w > 500 || h > 500) {
-    w /= 1000;
-    h /= 1000;
-  }
-  return { widthM: w, heightM: h, areaSqm: w * h };
+  // mm → m 자동 변환
+  if (w > 500 || h > 500) { w /= 1000; h /= 1000; }
+  return { w, h };
 }
 
-function findZone(zones: { id: number; name: string; availableAreaSqm: number }[], rawName: string) {
-  const n = (s: string) => s.toLowerCase().replace(/\s+/g, '');
-  const candidates = [rawName, `shop ${rawName}`, `SHOP ${rawName}`];
-  for (const cand of candidates) {
-    const z = zones.find((z) => n(z.name) === n(cand));
+// 면적 계산: widthM × heightM × quantity × (1 + marginRate/100)
+function calcArea(w: number, h: number, qty: number, margin: number): number {
+  return w * h * qty * (1 + margin / 100);
+}
+
+function findZone(
+  zones: { id: number; name: string; availableAreaSqm: number }[],
+  rawName: string,
+) {
+  const n   = (s: string) => s.toLowerCase().replace(/\s+/g, '');
+  const nd  = (s: string) => s.toLowerCase().replace(/[\s\-]/g, ''); // 대시·공백 제거
+
+  // 1. 기본 후보 (정확 + "shop " 접두 추가)
+  for (const cand of [rawName, `shop ${rawName}`, `SHOP ${rawName}`]) {
+    const z = zones.find(z => n(z.name) === n(cand));
     if (z) return z;
   }
+
+  // 2. 대시 제거 비교: A1 → A-1, B3 → B-3 (이진공장 패턴)
+  for (const zone of zones) {
+    if (nd(zone.name) === nd(rawName)) return zone;
+    if (nd(zone.name) === nd(`shop${rawName}`)) return zone;
+  }
+
+  // 3. Y + 숫자 → YARD-N (이진공장: Y1 → YARD-1)
+  const yardM = rawName.match(/^Y(\d+)$/i);
+  if (yardM) {
+    const z = zones.find(z => n(z.name) === n(`YARD-${yardM[1]}`));
+    if (z) return z;
+  }
+
+  // 4. S + 숫자 → shop A/B/C... (거제공장: S1→A, S2→B, S3→C)
+  const shopM = rawName.match(/^S(\d+)$/i);
+  if (shopM) {
+    const letter = String.fromCharCode(64 + parseInt(shopM[1])); // 1→A, 2→B, 3→C
+    const z = zones.find(z => n(z.name) === n(`shop${letter}`));
+    if (z) return z;
+    // YARD fallback: S번호가 shop 개수 초과면 YARD로
+    const yardZ = zones.find(z => /yard/i.test(z.name));
+    if (yardZ) return yardZ;
+  }
+
   return null;
 }
 
-export async function upsertProjectRows(rows: ProjectRow[], options: UpsertProjectRowsOptions = {}): Promise<ProjectSyncResult> {
+export async function upsertProjectRows(
+  rows: ProjectRow[],
+  options: UpsertProjectRowsOptions = {},
+): Promise<ProjectSyncResult> {
   const replaceExisting = options.replaceExisting ?? true;
-  const factories = await prisma.factory.findMany({ include: { zones: { where: { isActive: true } } } });
+  const factories = await prisma.factory.findMany({
+    include: { zones: { where: { isActive: true } } },
+  });
 
   const factoryMap = new Map<string, typeof factories[0]>();
   for (const f of factories) {
@@ -93,38 +147,37 @@ export async function upsertProjectRows(rows: ProjectRow[], options: UpsertProje
     factoryMap.set(f.code, f);
   }
 
-  type ValidItem = {
+  interface ValidItem {
     row: ProjectRow;
     zone: { id: number; name: string; availableAreaSqm: number };
-    startDate: Date; endDate: Date;
-    requiredAreaSqm: number; widthM: number; heightM: number;
+    startDate: Date;
+    endDate: Date;
+    requiredAreaSqm: number;
+    widthM: number;
+    heightM: number;
+    quantity: number;
+    marginRate: number;
     description: string | null;
-  };
+    businessDivision: string | null;
+    // 2구간
+    phase2?: { startDate: Date; endDate: Date; widthM: number; heightM: number; quantity: number; marginRate: number; calculatedAreaSqm: number };
+  }
 
   const valid: ValidItem[] = [];
   let skipped = 0;
   const skippedByReason: Record<string, number> = {};
   const skippedSamples: NonNullable<ProjectSyncResult['skippedSamples']> = [];
 
-  const skip = (
-    reason: string,
-    row: Partial<ProjectRow>,
-  ) => {
+  const skip = (reason: string, row: Partial<ProjectRow>) => {
     skipped++;
     skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
     if (skippedSamples.length < 20) {
-      skippedSamples.push({
-        reason,
-        projectCode: row.projectCode,
-        shopName: row.shopName,
-        zoneName: row.zoneName,
-        dimensions: row.dimensions,
-      });
+      skippedSamples.push({ reason, projectCode: row.projectCode, shopName: row.shopName, zoneName: row.zoneName });
     }
   };
 
   for (const row of rows) {
-    const { projectCode, division, client, item, productGroup, shopName, endDate: endDateStr, startDate: startDateStr, dimensions: dimStr, zoneName } = row;
+    const { projectCode, division, item, productGroup, shopName, endDate: endDateStr, startDate: startDateStr, widthM: wStr, heightM: hStr, quantity: qStr, marginRate: mrStr, zoneName } = row;
 
     const startDate = new Date(startDateStr);
     const endDate = new Date(endDateStr);
@@ -136,13 +189,44 @@ export async function upsertProjectRows(rows: ProjectRow[], options: UpsertProje
     const zone = findZone(factory.zones, zoneName);
     if (!zone) { console.warn(`zone "${zoneName}" not in ${factory.name} (${projectCode})`); skip('unknown zone', row); continue; }
 
-    const dims = dimStr ? parseDimensions(dimStr) : null;
-    if (!dims) { skip('invalid dimensions', row); continue; }
+    // 면적 계산
+    let widthM = 0, heightM = 0, quantity = 1, marginRate = 0;
+    if (wStr && hStr) {
+      widthM = parseFloat(wStr.replace(/,/g, '')) || 0;
+      heightM = parseFloat(hStr.replace(/,/g, '')) || 0;
+      if (widthM > 500 || heightM > 500) { widthM /= 1000; heightM /= 1000; }
+    } else if (wStr) {
+      // "widthxheight" 형태가 하나의 필드에 들어올 수도 있음
+      const dims = parseDimPair(wStr);
+      if (dims) { widthM = dims.w; heightM = dims.h; }
+    }
+    if (qStr) quantity = parseInt(qStr, 10) || 1;
+    if (mrStr) marginRate = parseFloat(mrStr) || 0;
+
+    if (!widthM || !heightM) { skip('invalid dimensions', row); continue; }
+
+    const requiredAreaSqm = calcArea(widthM, heightM, quantity, marginRate);
+
+    // 2구간
+    let phase2: ValidItem['phase2'] | undefined;
+    if (row.phase2Start && row.phase2End && row.phase2Width && row.phase2Height) {
+      const p2Start = new Date(row.phase2Start);
+      const p2End = new Date(row.phase2End);
+      if (!isNaN(p2Start.getTime()) && !isNaN(p2End.getTime()) && p2Start < p2End) {
+        const p2W = parseFloat(row.phase2Width.replace(/,/g, '')) || 0;
+        const p2H = parseFloat(row.phase2Height.replace(/,/g, '')) || 0;
+        const p2Q = parseInt(row.phase2Quantity ?? '1', 10) || 1;
+        if (p2W && p2H) {
+          phase2 = { startDate: p2Start, endDate: p2End, widthM: p2W, heightM: p2H, quantity: p2Q, marginRate, calculatedAreaSqm: calcArea(p2W, p2H, p2Q, marginRate) };
+        }
+      }
+    }
 
     valid.push({
-      row, zone, startDate, endDate,
-      requiredAreaSqm: dims.areaSqm, widthM: dims.widthM, heightM: dims.heightM,
-      description: [division, item, productGroup].filter(Boolean).join(' / ') || null,
+      row, zone, startDate, endDate, requiredAreaSqm, widthM, heightM, quantity, marginRate,
+      description: [item, productGroup].filter(Boolean).join(' / ') || null,
+      businessDivision: division || null,
+      phase2,
     });
   }
 
@@ -150,96 +234,105 @@ export async function upsertProjectRows(rows: ProjectRow[], options: UpsertProje
     return { projectsUpserted: 0, assignmentsUpserted: 0, skipped, skippedByReason, skippedSamples };
   }
 
-  const projectRows = new Map<string, { projectNo: string; clientName: string | null; descriptions: Set<string> }>();
-  for (const item of valid) {
-    const projectNo = item.row.projectCode;
-    const project = projectRows.get(projectNo);
-    if (project) {
-      if (!project.clientName && item.row.client) project.clientName = item.row.client;
-      if (item.description) project.descriptions.add(item.description);
+  // 프로젝트 집계
+  const projectRows = new Map<string, { projectNo: string; clientName: string | null; descriptions: Set<string>; businessDivision: string | null }>();
+  for (const v of valid) {
+    const projectNo = v.row.projectCode;
+    const existing = projectRows.get(projectNo);
+    if (existing) {
+      if (!existing.clientName && v.row.client) existing.clientName = v.row.client;
+      if (v.description) existing.descriptions.add(v.description);
+      if (!existing.businessDivision && v.businessDivision) existing.businessDivision = v.businessDivision;
     } else {
       projectRows.set(projectNo, {
         projectNo,
-        clientName: item.row.client || null,
-        descriptions: item.description ? new Set([item.description]) : new Set(),
+        clientName: v.row.client || null,
+        descriptions: v.description ? new Set([v.description]) : new Set(),
+        businessDivision: v.businessDivision,
       });
     }
   }
-  const projects = [...projectRows.values()].map((project) => ({
-    projectNo: project.projectNo,
-    clientName: project.clientName,
-    description: [...project.descriptions].join('\n') || null,
-  }));
 
-  const placeholders = projects.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3}, 'active', NOW(), NOW())`).join(', ');
-  const values = projects.flatMap(p => [p.projectNo, p.clientName, p.description]);
-  const incomingProjectNos = projects.map((p) => p.projectNo);
+  const incomingProjectNos = [...projectRows.keys()];
 
-  const result = await prisma.$transaction(async (tx) => {
-    // Query 1: bulk upsert unique projects, get IDs back
-    const upserted = await tx.$queryRawUnsafe<{ id: number; projectNo: string }[]>(
-    `INSERT INTO "Project" ("projectNo", "clientName", "description", "status", "createdAt", "updatedAt")
-     VALUES ${placeholders}
-     ON CONFLICT ("projectNo") DO UPDATE SET
-       "clientName" = EXCLUDED."clientName",
-       "description" = EXCLUDED."description",
-       "status" = 'active',
-       "updatedAt" = NOW()
-     RETURNING id, "projectNo"`,
-      ...values
-    );
-    const projectIdMap = new Map(upserted.map(p => [p.projectNo, p.id]));
+  const result = await prisma.$transaction(async tx => {
+    // 프로젝트 upsert
+    const projectIdMap = new Map<string, number>();
+    for (const p of projectRows.values()) {
+      const proj = await tx.project.upsert({
+        where: { projectNo: p.projectNo },
+        update: { clientName: p.clientName, description: [...p.descriptions].join('\n') || null, businessDivision: p.businessDivision, status: 'active', updatedAt: new Date() },
+        create: { projectNo: p.projectNo, clientName: p.clientName, description: [...p.descriptions].join('\n') || null, businessDivision: p.businessDivision, status: 'active' },
+      });
+      projectIdMap.set(p.projectNo, proj.id);
+    }
 
-    // Query 2: delete assignments for projects no longer present in the current sheet.
-    const staleWhere = {
-      projectNo: { notIn: incomingProjectNos },
-      OR: [
-        { status: 'confirmed' },
-        { projectNo: { startsWith: 'U' } },
-      ],
-    };
-    const staleProjects = replaceExisting
-      ? await tx.project.findMany({ where: staleWhere, select: { id: true } })
-      : [];
-    const staleProjectIds = staleProjects.map((p) => p.id);
-    const staleAssignments = staleProjectIds.length > 0
-      ? await tx.areaAssignment.deleteMany({ where: { projectId: { in: staleProjectIds } } })
-      : { count: 0 };
-    const deletedProjects = staleProjectIds.length > 0
-      ? await tx.project.deleteMany({ where: { id: { in: staleProjectIds } } })
-      : { count: 0 };
+    // 오래된 프로젝트(스프레드시트에 없는) 삭제
+    let deletedProjects = 0, deletedAssignments = 0;
+    if (replaceExisting) {
+      const staleProjects = await tx.project.findMany({
+        where: { projectNo: { notIn: incomingProjectNos } },
+        select: { id: true },
+      });
+      if (staleProjects.length > 0) {
+        const staleIds = staleProjects.map(p => p.id);
+        await tx.areaDemandSegment.deleteMany({ where: { assignment: { projectId: { in: staleIds } } } });
+        const del = await tx.areaAssignment.deleteMany({ where: { projectId: { in: staleIds } } });
+        const delP = await tx.project.deleteMany({ where: { id: { in: staleIds } } });
+        deletedAssignments = del.count;
+        deletedProjects = delP.count;
+      }
+    }
 
-    // Query 3: delete old assignments for incoming projects (clean re-sync).
-    await tx.areaAssignment.deleteMany({ where: { projectId: { in: [...projectIdMap.values()] } } });
+    // 기존 배치 전부 삭제 후 재삽입 (clean re-sync)
+    const incomingIds = [...projectIdMap.values()];
+    await tx.areaDemandSegment.deleteMany({ where: { assignment: { projectId: { in: incomingIds } } } });
+    await tx.areaAssignment.deleteMany({ where: { projectId: { in: incomingIds } } });
 
-    // Query 4: bulk insert all current assignments.
-    await tx.areaAssignment.createMany({
-      data: valid.map(v => ({
-        projectId: projectIdMap.get(v.row.projectCode)!,
-        zoneId: v.zone.id,
-        startDate: v.startDate,
-        endDate: v.endDate,
-        requiredAreaSqm: v.requiredAreaSqm,
-        widthM: v.widthM,
-        heightM: v.heightM,
-        status: 'confirmed',
-      })),
-    });
+    // 배치 삽입
+    let assignmentsUpserted = 0;
+    for (const v of valid) {
+      const projectId = projectIdMap.get(v.row.projectCode)!;
+      const assignment = await tx.areaAssignment.create({
+        data: {
+          projectId,
+          zoneId: v.zone.id,
+          startDate: v.startDate,
+          endDate: v.endDate,
+          requiredAreaSqm: v.requiredAreaSqm,
+          widthM: v.widthM,
+          heightM: v.heightM,
+          quantity: v.quantity,
+          marginRate: v.marginRate,
+          status: 'confirmed',
+        },
+      });
 
-    return {
-      projectsDeleted: deletedProjects.count,
-      assignmentsDeleted: staleAssignments.count,
-    };
+      if (v.phase2) {
+        const p1End = new Date(v.phase2.startDate);
+        p1End.setDate(p1End.getDate() - 1);
+        await tx.areaDemandSegment.createMany({
+          data: [
+            { assignmentId: assignment.id, phaseNo: 1, startDate: v.startDate, endDate: p1End, widthM: v.widthM, heightM: v.heightM, quantity: v.quantity, marginRate: v.marginRate, calculatedAreaSqm: v.requiredAreaSqm },
+            { assignmentId: assignment.id, phaseNo: 2, startDate: v.phase2.startDate, endDate: v.phase2.endDate, widthM: v.phase2.widthM, heightM: v.phase2.heightM, quantity: v.phase2.quantity, marginRate: v.phase2.marginRate, calculatedAreaSqm: v.phase2.calculatedAreaSqm },
+          ],
+        });
+      }
+      assignmentsUpserted++;
+    }
+
+    return { deletedProjects, deletedAssignments, assignmentsUpserted };
   });
 
-  console.log(`sync: ${projects.length} projects, ${valid.length} assignments, ${skipped} skipped, ${result.projectsDeleted} stale projects deleted`);
+  console.log(`sync: ${projectRows.size} projects, ${result.assignmentsUpserted} assignments, ${skipped} skipped, ${result.deletedProjects} stale deleted`);
   return {
-    projectsUpserted: projects.length,
-    assignmentsUpserted: valid.length,
+    projectsUpserted: projectRows.size,
+    assignmentsUpserted: result.assignmentsUpserted,
     skipped,
     skippedByReason,
     skippedSamples,
-    ...result,
+    projectsDeleted: result.deletedProjects,
+    assignmentsDeleted: result.deletedAssignments,
   };
 }
 
@@ -264,33 +357,49 @@ export async function syncProjectsFromSheet(sheetsId: string): Promise<ProjectSy
   let lineIndex = 0;
   for (const rawLine of csvText.split('\n')) {
     lineIndex++;
-    if (lineIndex <= 2) continue; // skip 2 header rows
+    if (lineIndex <= 2) continue; // 헤더 2행 스킵
 
     const cols = parseCSVRow(rawLine.replace(/\r$/, ''));
     if (cols.length < 30) continue;
 
-    // Corrected column indices (actual spreadsheet structure):
-    // col 1=프로젝트코드, col 2=사업부구분, col 3=발주처, col 4=ITEM, col 5=제품군
-    // col 13=SHOP, col 16=변경납기일, col 27=변경납기일-조립기간, col 28=면적(가로x세로), col 29=작업동
+    // 컬럼 인덱스 (0-based)
+    // 0=순번, 1=프로젝트코드, 2=사업부구분, 3=발주처, 4=ITEM, 5=제품군
+    // 12=SHOP(공장), 15=변경납기일, 26=착수일, 27=가로(m), 28=세로(m), 29=작업동
+    // 30=수량, 31=여유율(%), 32=2구간시작, 33=2구간종료, 34=2구간가로, 35=2구간세로
     const projectCode = cols[1].trim();
     if (!projectCode || projectCode === '프로젝트코드') continue;
 
-    const shopName  = cols[13].trim();
-    const endDateStr = cols[16].trim();
-    const startDateStr = cols[27].trim();
-    const dimStr    = cols[28].trim();
-    const zoneName  = cols[29].trim();
+    const shopName    = cols[12]?.trim() ?? '';
+    const endDateStr  = cols[15]?.trim() ?? '';
+    const startDateStr= cols[26]?.trim() ?? '';
+    const widthM      = cols[27]?.trim() ?? '';
+    const heightM     = cols[28]?.trim() ?? '';
+    const zoneName    = cols[29]?.trim() ?? '';
+    const quantity    = cols[30]?.trim() ?? '';
+    const marginRate  = cols[31]?.trim() ?? '';
+    const phase2Start = cols[32]?.trim() ?? '';
+    const phase2End   = cols[33]?.trim() ?? '';
+    const phase2Width = cols[34]?.trim() ?? '';
+    const phase2Height= cols[35]?.trim() ?? '';
 
     if (!shopName || !zoneName || !endDateStr || !startDateStr) continue;
 
     rows.push({
       projectCode,
-      division:     cols[2].trim(),
-      client:       cols[3].trim(),
-      item:         cols[4].trim(),
-      productGroup: cols[5].trim(),
+      division:     cols[2]?.trim() ?? '',
+      client:       cols[3]?.trim() ?? '',
+      item:         cols[4]?.trim() ?? '',
+      productGroup: cols[5]?.trim() ?? '',
       shopName, endDate: endDateStr, startDate: startDateStr,
-      dimensions: dimStr || undefined, zoneName,
+      widthM: widthM || undefined,
+      heightM: heightM || undefined,
+      quantity: quantity || undefined,
+      marginRate: marginRate || undefined,
+      zoneName,
+      phase2Start: phase2Start || undefined,
+      phase2End: phase2End || undefined,
+      phase2Width: phase2Width || undefined,
+      phase2Height: phase2Height || undefined,
     });
   }
 
