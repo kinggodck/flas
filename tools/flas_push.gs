@@ -234,11 +234,9 @@ function pushToFLAS() {
   }
   var stubsArray = Object.values(allStubsMap);
 
-  // 배치 전송에 포함될 프로젝트 코드 전체 목록 (stale 정리 기준)
-  for (var ri = 0; ri < rows.length; ri++) {
-    var rpCode = rows[ri].projectCode;
-    if (rpCode && allValidProjectNos.indexOf(rpCode) === -1) allValidProjectNos.push(rpCode);
-  }
+  // stale 정리 기준 = allStubs 전체 코드 (공장 없는 행 포함)
+  // 유효 배치(valid rows)에만 제한하면 공장 없는 행 프로젝트가 stale로 잘못 삭제됨
+  allValidProjectNos = Object.keys(allStubsMap);
 
   if (rows.length === 0 && stubsArray.length === 0) {
     logAndAlert('경고', '유효한 데이터 행이 없습니다. 컬럼 인덱스(COL)를 확인하세요.');

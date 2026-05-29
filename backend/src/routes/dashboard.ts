@@ -215,27 +215,33 @@ router.get('/items', async (req, res, next) => {
   try {
     const limit = Number(req.query.limit ?? 20);
 
+    // orphan 정리: project가 삭제됐지만 item이 남은 경우 raw SQL로 제거
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "ProjectItem" WHERE "projectId" NOT IN (SELECT id FROM "Project")`
+    ).catch(() => { /* 테이블 없거나 이미 정리됨 — 무시 */ });
+
     const items = await prisma.projectItem.findMany({
       include: { project: { include: { assignments: { include: { zone: { include: { factory: true } } } } } } },
       orderBy: { totalAreaSqm: 'desc' },
       take: limit,
     });
 
-    const result = items.map((item, idx) => ({
+    const result = items.filter(item => item.project != null).map((item, idx) => ({
       rank: idx + 1,
       id: item.id,
       itemName: item.itemName,
       itemCategory: item.itemCategory,
-      projectNo: item.project.projectNo,
-      clientName: item.project.clientName,
-      businessDivision: item.project.businessDivision,
+      projectNo: item.project!.projectNo,
+      clientName: item.project!.clientName,
+      businessDivision: item.project!.businessDivision,
       widthM: Number(item.widthM),
       heightM: Number(item.heightM),
       quantity: item.quantity,
       marginRate: Number(item.marginRate),
       unitAreaSqm: Number(item.unitAreaSqm),
       totalAreaSqm: Number(item.totalAreaSqm),
-      zones: item.project.assignments.map(a => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      zones: (item.project!.assignments as any[]).map((a) => ({
         factoryName: a.zone.factory.name,
         zoneName: a.zone.name,
         startDate: a.startDate.toISOString().slice(0, 10),
