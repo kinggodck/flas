@@ -221,70 +221,84 @@ function pushToFLAS() {
     return;
   }
 
-  // FLAS 서버로 POST
+  // Vercel 함수 타임아웃(10~60초) 대응: 200행씩 분할 전송
+  var BATCH_SIZE = 200;
   var url = FLAS_SERVER_URL.replace(/\/$/, '') + '/api/admin/push-projects';
-  var payload = JSON.stringify({ rows: rows, replaceExisting: true });
+  var totalProjects = 0, totalAssignments = 0, totalSkipped = 0, totalDeleted = 0;
+  var allSkipReasons = {}, allSkipSamples = [];
+  var errors = [];
 
-  try {
-    var response = UrlFetchApp.fetch(url, {
-      method      : 'post',
-      contentType : 'application/json',
-      payload     : payload,
-      muteHttpExceptions: true,
-      headers     : {
-        'X-FLAS-Source': 'apps-script',
-        'X-Sheet-Id'   : ss.getId(),
-      },
-    });
+  for (var batchStart = 0; batchStart < rows.length; batchStart += BATCH_SIZE) {
+    var batch = rows.slice(batchStart, batchStart + BATCH_SIZE);
+    var isFirst = batchStart === 0;
 
-    var code   = response.getResponseCode();
-    var body   = response.getContentText();
-    var result = JSON.parse(body);
+    try {
+      var response = UrlFetchApp.fetch(url, {
+        method      : 'post',
+        contentType : 'application/json',
+        payload     : JSON.stringify({ rows: batch, replaceExisting: isFirst }),
+        muteHttpExceptions: true,
+        headers     : { 'X-FLAS-Source': 'apps-script', 'X-Sheet-Id': ss.getId() },
+      });
 
-    var msg;
-    if (code === 200 && result.ok !== false) {
-      msg = '✅ 동기화 완료\n' +
-            '프로젝트: ' + (result.projectsUpserted || 0) + '건\n' +
-            '배치: '     + (result.assignmentsUpserted || 0) + '건\n' +
-            '스킵: '     + (result.skipped || 0) + '건\n' +
-            '삭제: '     + (result.projectsDeleted || 0) + '건';
+      var code = response.getResponseCode();
+      var body = response.getContentText();
 
-      // 스킵 이유 상세 표시
-      if (result.skipped > 0 && result.skippedByReason) {
-        msg += '\n\n── 스킵 이유 ──';
-        for (var reason in result.skippedByReason) {
-          msg += '\n• ' + reason + ': ' + result.skippedByReason[reason] + '건';
-        }
+      if (code !== 200) {
+        errors.push('배치 ' + (batchStart/BATCH_SIZE+1) + ' HTTP ' + code + ': ' + body.slice(0, 100));
+        continue;
       }
 
-      // 샘플 데이터 표시 (최대 3건)
-      if (result.skippedSamples && result.skippedSamples.length > 0) {
-        msg += '\n\n── 샘플 (처음 3건) ──';
-        var samples = result.skippedSamples.slice(0, 3);
-        for (var s = 0; s < samples.length; s++) {
-          var sp = samples[s];
-          msg += '\n[' + sp.reason + '] ' +
-                 (sp.projectCode || '') + ' / ' +
-                 (sp.shopName || '') + ' / ' +
-                 (sp.zoneName || '');
-        }
+      var result;
+      try { result = JSON.parse(body); }
+      catch (e) {
+        errors.push('배치 ' + (batchStart/BATCH_SIZE+1) + ' JSON 파싱 실패: ' + body.slice(0, 100));
+        continue;
       }
 
-      writeLog('SUCCESS', rows.length + '행 전송 → 프로젝트:' + (result.projectsUpserted||0) + ' 배치:' + (result.assignmentsUpserted||0) + ' 스킵:' + (result.skipped||0));
-      if (result.skippedByReason) writeLog('SKIP_DETAIL', JSON.stringify(result.skippedByReason));
-      showAlert('FLAS 동기화 완료', msg);
-    } else {
-      msg = '서버 오류 (HTTP ' + code + ')\n' + (result.error || body).slice(0, 200);
-      writeLog('ERROR', msg);
-      notifyError(msg);
-      showAlert('FLAS 동기화 오류', msg);
+      totalProjects    += result.projectsUpserted    || 0;
+      totalAssignments += result.assignmentsUpserted || 0;
+      totalSkipped     += result.skipped             || 0;
+      totalDeleted     += result.projectsDeleted     || 0;
+
+      if (result.skippedByReason) {
+        for (var r in result.skippedByReason) {
+          allSkipReasons[r] = (allSkipReasons[r] || 0) + result.skippedByReason[r];
+        }
+      }
+      if (result.skippedSamples) {
+        allSkipSamples = allSkipSamples.concat(result.skippedSamples).slice(0, 5);
+      }
+
+    } catch (e) {
+      errors.push('배치 ' + (batchStart/BATCH_SIZE+1) + ' 요청 실패: ' + e.toString().slice(0, 100));
     }
-  } catch (e) {
-    var errMsg = '요청 실패: ' + e.toString() + '\n서버 URL을 확인하세요: ' + url;
-    writeLog('ERROR', errMsg);
-    notifyError(errMsg);
-    showAlert('FLAS 동기화 오류', errMsg);
   }
+
+  var batches = Math.ceil(rows.length / BATCH_SIZE);
+  var msg = (errors.length === 0 ? '✅' : '⚠') + ' 동기화 완료 (' + batches + '배치)\n' +
+            '프로젝트: ' + totalProjects + '건\n' +
+            '배치: '     + totalAssignments + '건\n' +
+            '스킵: '     + totalSkipped + '건\n' +
+            '삭제: '     + totalDeleted + '건';
+
+  if (errors.length > 0) {
+    msg += '\n\n── 오류 ──\n' + errors.join('\n');
+  }
+  if (totalSkipped > 0 && Object.keys(allSkipReasons).length > 0) {
+    msg += '\n\n── 스킵 이유 ──';
+    for (var sr in allSkipReasons) msg += '\n• ' + sr + ': ' + allSkipReasons[sr] + '건';
+  }
+  if (allSkipSamples.length > 0) {
+    msg += '\n\n── 샘플 ──';
+    allSkipSamples.slice(0, 3).forEach(function(sp) {
+      msg += '\n[' + sp.reason + '] ' + (sp.projectCode||'') + ' / ' + (sp.shopName||'') + ' / ' + (sp.zoneName||'');
+    });
+  }
+
+  writeLog(errors.length === 0 ? 'SUCCESS' : 'WARN',
+    rows.length + '행 / ' + batches + '배치 → 프로젝트:' + totalProjects + ' 배치:' + totalAssignments + ' 스킵:' + totalSkipped);
+  showAlert('FLAS 동기화', msg);
 }
 
 
