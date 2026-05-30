@@ -132,13 +132,51 @@ function ItemsTab({ year }: { year: number }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center flex-wrap gap-2">
-        <h2 className="font-semibold text-gray-700 text-sm">
-          {year}년 사용 아이템별 면적 집계 ({data.total}건)
-        </h2>
-        <span className="text-sm text-blue-600 font-semibold">
-          전체 할당 면적 합계: {Math.round(data.grandTotalArea).toLocaleString()}㎡
-        </span>
+      {/* 총 가용 면적 vs 사용 면적 요약 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+          <p className="text-xs text-gray-500">전체 공장 가용 면적</p>
+          <p className="text-xl font-bold text-gray-800">{Math.round(data.totalAvailableArea).toLocaleString()}㎡</p>
+          <p className="text-xs text-gray-400">전체 활성 구역 합계</p>
+        </div>
+        <div className="bg-white rounded-xl border border-blue-200 px-4 py-3">
+          <p className="text-xs text-gray-500">{year}년 배치 사용 면적</p>
+          <p className="text-xl font-bold text-blue-700">{Math.round(data.totalAssignedArea).toLocaleString()}㎡</p>
+          <p className="text-xs text-gray-400">확정 배치 기준</p>
+        </div>
+        <div className={`bg-white rounded-xl border px-4 py-3 ${data.utilizationRate > 100 ? 'border-red-300' : 'border-gray-200'}`}>
+          <p className="text-xs text-gray-500">면적 가동률</p>
+          <p className={`text-xl font-bold ${data.utilizationRate > 100 ? 'text-red-600' : 'text-gray-800'}`}>
+            {data.utilizationRate.toFixed(1)}%
+          </p>
+          <p className="text-xs text-gray-400">배치면적 / 가용면적</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+          <p className="text-xs text-gray-500">아이템별 집계 면적</p>
+          <p className="text-xl font-bold text-gray-800">{Math.round(data.grandTotalArea).toLocaleString()}㎡</p>
+          <p className="text-xs text-gray-400">{data.total}건 아이템 합계</p>
+        </div>
+      </div>
+      {/* 가용 면적 대비 사용 면적 비율 바 */}
+      <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+        <div className="flex justify-between text-xs text-gray-500 mb-1">
+          <span>사용 면적 {Math.round(data.totalAssignedArea).toLocaleString()}㎡</span>
+          <span>가용 {Math.round(data.totalAvailableArea).toLocaleString()}㎡</span>
+        </div>
+        <div className="bg-gray-100 rounded-full h-3 overflow-hidden">
+          <div
+            className={`h-full rounded-full ${data.utilizationRate > 100 ? 'bg-red-500' : data.utilizationRate > 80 ? 'bg-amber-400' : 'bg-blue-500'}`}
+            style={{ width: `${Math.min(data.utilizationRate, 100)}%` }}
+          />
+        </div>
+        <p className="text-xs text-gray-400 mt-1">
+          {data.utilizationRate > 100
+            ? `⚠ 가용 면적 초과 (${(data.utilizationRate - 100).toFixed(1)}% 초과)`
+            : `잔여 ${Math.round(data.totalAvailableArea - data.totalAssignedArea).toLocaleString()}㎡`}
+        </p>
+      </div>
+      <div className="flex justify-between items-center">
+        <h2 className="font-semibold text-gray-700 text-sm">{year}년 아이템별 사용 면적 랭킹 ({data.total}건)</h2>
       </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <table className="w-full text-sm">

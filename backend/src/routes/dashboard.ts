@@ -286,8 +286,30 @@ router.get('/items', async (req, res, next) => {
         },
       },
     });
+
+    // 전체 공장 가용 면적 합계 (모든 활성 구역)
+    const allZones = await prisma.zone.findMany({ where: { isActive: true }, select: { availableAreaSqm: true } });
+    const totalAvailableArea = allZones.reduce((s, z) => s + Number(z.availableAreaSqm), 0);
+
+    // 해당 연도 배치된 총 점유 면적 (AreaAssignment 기준 — 아이템이 없는 프로젝트 포함)
+    const allAssignments = await prisma.areaAssignment.findMany({
+      where: { status: 'confirmed', startDate: { lte: yearEnd }, endDate: { gte: yearStart } },
+      select: { requiredAreaSqm: true },
+    });
+    const totalAssignedArea = allAssignments.reduce((s, a) => s + Number(a.requiredAreaSqm), 0);
+
+    // 아이템별 할당 면적 합계
     const grandTotalArea = result.reduce((s, i) => s + i.totalAreaSqm, 0);
-    res.json({ year, items: result, total, grandTotalArea });
+
+    res.json({
+      year,
+      items: result,
+      total,
+      grandTotalArea,          // 아이템별 면적 합계
+      totalAssignedArea,       // 전체 배치 면적 합계 (AreaAssignment 기준)
+      totalAvailableArea,      // 전체 공장 가용 면적
+      utilizationRate: totalAvailableArea > 0 ? (totalAssignedArea / totalAvailableArea) * 100 : 0,
+    });
   } catch (e) { next(e); }
 });
 

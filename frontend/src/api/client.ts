@@ -304,7 +304,10 @@ export interface ItemDashboard {
   year: number;
   items: ItemRankEntry[];
   total: number;
-  grandTotalArea: number;
+  grandTotalArea: number;       // 아이템별 면적 합계
+  totalAssignedArea: number;    // 전체 배치 면적 합계
+  totalAvailableArea: number;   // 전체 공장 가용 면적
+  utilizationRate: number;      // 가동률 %
 }
 
 export const getItemDashboard = (year: number, limit?: number) =>
