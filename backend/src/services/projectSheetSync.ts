@@ -159,6 +159,20 @@ export async function upsertProjectRows(
         },
       });
     }
+
+    // Phase 0: 전체 ProjectItem 선제 삭제 (배치별 덮어쓰기 방지)
+    // allProjectNos에 있는 모든 프로젝트의 아이템을 미리 지워 각 배치가 누적 추가만 하도록 함
+    if (options.allProjectNos && options.allProjectNos.length > 0) {
+      const allProjects = await prisma.project.findMany({
+        where: { projectNo: { in: options.allProjectNos } },
+        select: { id: true },
+      });
+      if (allProjects.length > 0) {
+        await prisma.projectItem.deleteMany({
+          where: { projectId: { in: allProjects.map(p => p.id) } },
+        });
+      }
+    }
   }
   const factories = await prisma.factory.findMany({
     include: { zones: { where: { isActive: true } } },
@@ -342,9 +356,8 @@ export async function upsertProjectRows(
     assignmentsUpserted += created.count;
   }
 
-  // 5. ProjectItem 동기화 — 시트의 ITEM/규격 컬럼 → 아이템별 면적 대시보드용
-  // 동일 프로젝트의 중복 아이템은 (itemName + widthM + heightM) 기준으로 제거
-  await prisma.projectItem.deleteMany({ where: { projectId: { in: incomingIds } } });
+  // 5. ProjectItem 추가 — Phase 0에서 이미 전체 삭제했으므로 여기선 삭제 없이 추가만
+  // (삭제 없이 누적 추가하면 여러 배치에 걸친 아이템이 모두 반영됨)
 
   const seenItemKey = new Set<string>();
   const itemData: {
@@ -361,7 +374,7 @@ export async function upsertProjectRows(
     seenItemKey.add(key);
 
     const unitAreaSqm = v.widthM * v.heightM;
-    const totalAreaSqm = unitAreaSqm * v.quantity * (1 + v.marginRate / 100);
+    const totalAreaSqm = unitAreaSqm * (1 + v.marginRate / 100); // 가로×세로가 이미 전체 필요면적
     itemData.push({
       projectId: projectIdMap.get(v.row.projectCode)!,
       itemName,
