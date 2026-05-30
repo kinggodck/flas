@@ -16,7 +16,7 @@ router.put('/:id', async (req, res, next) => {
     const h = Number(heightM) || 0;
     const qty = Number(quantity ?? 1);
     const mr = Number(marginRate ?? 0);
-    const area = w && h ? w * h * qty * (1 + mr / 100) : 0;
+    const area = w && h ? w * h * (1 + mr / 100) : 0; // 가로×세로가 이미 전체 필요면적
 
     if (!area) {
       res.status(400).json({ error: '가로(widthM)와 세로(heightM)는 필수입니다.' });

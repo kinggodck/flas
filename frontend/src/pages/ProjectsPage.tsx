@@ -9,8 +9,8 @@ import type { Factory, Project, ProjectItem, ValidationResult } from '../api/cli
 
 const BU_OPTIONS = ['플랜트 BU', '방산 BU', '중공업 BU', '기타'];
 
-function calcArea(w: number, h: number, qty: number, mr: number) {
-  return w * h * qty * (1 + mr / 100);
+function calcArea(w: number, h: number, _qty: number, mr: number) {
+  return w * h * (1 + mr / 100); // 가로×세로가 이미 수량 전체 필요 면적
 }
 
 function LoadBadge({ pct }: { pct: number }) {

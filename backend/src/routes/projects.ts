@@ -103,7 +103,7 @@ router.post('/:id/assignments', async (req, res, next) => {
       return;
     }
 
-    const area = w * h * qty * (1 + mr / 100);
+    const area = w * h * (1 + mr / 100); // 가로×세로가 이미 수량 전체 필요 면적
 
     const validation = await validateAssignment(Number(zoneId), start, end, area);
     if (validation.hasConflict && !force) {
@@ -132,7 +132,7 @@ router.post('/:id/assignments', async (req, res, next) => {
           await tx.areaDemandSegment.createMany({
             data: [
               { assignmentId: a.id, phaseNo: 1, startDate: start, endDate: p1End, widthM: w, heightM: h, quantity: qty, marginRate: mr, calculatedAreaSqm: area },
-              { assignmentId: a.id, phaseNo: 2, startDate: p2Start, endDate: p2End, widthM: p2W, heightM: p2H, quantity: p2Q, marginRate: mr, calculatedAreaSqm: p2W * p2H * p2Q * (1 + mr / 100) },
+              { assignmentId: a.id, phaseNo: 2, startDate: p2Start, endDate: p2End, widthM: p2W, heightM: p2H, quantity: p2Q, marginRate: mr, calculatedAreaSqm: p2W * p2H * (1 + mr / 100) },
             ],
           });
         }
@@ -171,7 +171,7 @@ router.post('/:id/items', async (req, res, next) => {
     const qty = Number(quantity);
     const mr = Number(marginRate);
     const unitAreaSqm = w * h;
-    const totalAreaSqm = unitAreaSqm * qty * (1 + mr / 100);
+    const totalAreaSqm = unitAreaSqm * (1 + mr / 100); // 가로×세로가 이미 전체 필요면적
 
     const item = await prisma.projectItem.create({
       data: { projectId, itemName, itemCategory, widthM: w, heightM: h, quantity: qty, marginRate: mr, unitAreaSqm, totalAreaSqm },
@@ -189,7 +189,7 @@ router.put('/:id/items/:itemId', async (req, res, next) => {
     const qty = Number(quantity);
     const mr = Number(marginRate);
     const unitAreaSqm = w * h;
-    const totalAreaSqm = unitAreaSqm * qty * (1 + mr / 100);
+    const totalAreaSqm = unitAreaSqm * (1 + mr / 100); // 가로×세로가 이미 전체 필요면적
 
     const item = await prisma.projectItem.update({
       where: { id: Number(req.params.itemId) },

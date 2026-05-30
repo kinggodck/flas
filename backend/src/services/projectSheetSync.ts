@@ -85,9 +85,10 @@ function parseDimPair(raw: string): { w: number; h: number } | null {
   return { w, h };
 }
 
-// 면적 계산: widthM × heightM × quantity × (1 + marginRate/100)
-function calcArea(w: number, h: number, qty: number, margin: number): number {
-  return w * h * qty * (1 + margin / 100);
+// 면적 계산: widthM × heightM × (1 + marginRate/100)
+// 가로×세로는 명기된 수량 전체를 조립하는 데 필요한 총 면적이므로 수량 추가 곱셈 없음
+function calcArea(w: number, h: number, _qty: number, margin: number): number {
+  return w * h * (1 + margin / 100);
 }
 
 function findZone(
