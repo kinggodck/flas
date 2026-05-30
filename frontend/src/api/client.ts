@@ -301,12 +301,14 @@ export interface ItemRankEntry {
 }
 
 export interface ItemDashboard {
+  year: number;
   items: ItemRankEntry[];
   total: number;
+  grandTotalArea: number;
 }
 
-export const getItemDashboard = (limit?: number) =>
-  api.get<ItemDashboard>('/dashboard/items', { params: { limit } }).then(r => r.data);
+export const getItemDashboard = (year: number, limit?: number) =>
+  api.get<ItemDashboard>('/dashboard/items', { params: { year, limit } }).then(r => r.data);
 
 // ── Admin ──────────────────────────────────────────────
 export interface ProjectSyncResult {

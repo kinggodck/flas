@@ -117,20 +117,28 @@ function DivisionsTab({ year }: { year: number }) {
 }
 
 // ── 아이템 탭 ──────────────────────────────────────────────────────
-function ItemsTab() {
-  const { data, isLoading } = useQuery({ queryKey: ['itemDashboard'], queryFn: () => getItemDashboard(30) });
+function ItemsTab({ year }: { year: number }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['itemDashboard', year],
+    queryFn: () => getItemDashboard(year, 100),
+  });
   const [detailItem, setDetailItem] = useState<number | null>(null);
 
   if (isLoading) return <p className="text-gray-400 text-center py-10">로딩 중…</p>;
-  if (!data || data.items.length === 0) return <p className="text-gray-400 text-center py-10">등록된 아이템이 없습니다.</p>;
+  if (!data || data.items.length === 0) return <p className="text-gray-400 text-center py-10">{year}년에 사용된 아이템이 없습니다.</p>;
 
   const maxArea = data.items[0]?.totalAreaSqm ?? 1;
   const detail = detailItem !== null ? data.items.find(i => i.id === detailItem) : null;
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="font-semibold text-gray-700 text-sm">아이템별 점유 면적 랭킹 (상위 {data.items.length}건 / 전체 {data.total}건)</h2>
+      <div className="flex justify-between items-center flex-wrap gap-2">
+        <h2 className="font-semibold text-gray-700 text-sm">
+          {year}년 사용 아이템별 면적 집계 ({data.total}건)
+        </h2>
+        <span className="text-sm text-blue-600 font-semibold">
+          전체 할당 면적 합계: {Math.round(data.grandTotalArea).toLocaleString()}㎡
+        </span>
       </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <table className="w-full text-sm">
@@ -279,7 +287,7 @@ export default function DashboardPage() {
           )}
 
           {activeTab === 'divisions' && <DivisionsTab year={queryYear} />}
-          {activeTab === 'items' && <ItemsTab />}
+          {activeTab === 'items' && <ItemsTab year={queryYear} />}
         </>
       )}
 

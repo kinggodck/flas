@@ -209,19 +209,47 @@ router.get('/divisions', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// GET /api/dashboard/items?limit=20
-// 아이템별 면적 점유 랭킹
+// GET /api/dashboard/items?year=2026&limit=50
+// 해당 연도에 배치(사용)된 아이템별 면적 집계
 router.get('/items', async (req, res, next) => {
   try {
-    const limit = Number(req.query.limit ?? 20);
+    const year  = Number(req.query.year  ?? new Date().getFullYear());
+    const limit = Number(req.query.limit ?? 50);
+    const yearStart = utcDate(year, 1, 1);
+    const yearEnd   = utcDate(year, 12, 31);
 
     // orphan 정리: project가 삭제됐지만 item이 남은 경우 raw SQL로 제거
     await prisma.$executeRawUnsafe(
       `DELETE FROM "ProjectItem" WHERE "projectId" NOT IN (SELECT id FROM "Project")`
     ).catch(() => { /* 테이블 없거나 이미 정리됨 — 무시 */ });
 
+    // 해당 연도에 배치(AreaAssignment)가 있는 프로젝트의 아이템만 조회
     const items = await prisma.projectItem.findMany({
-      include: { project: { include: { assignments: { include: { zone: { include: { factory: true } } } } } } },
+      where: {
+        project: {
+          assignments: {
+            some: {
+              status: 'confirmed',
+              startDate: { lte: yearEnd },
+              endDate:   { gte: yearStart },
+            },
+          },
+        },
+      },
+      include: {
+        project: {
+          include: {
+            assignments: {
+              where: {
+                status: 'confirmed',
+                startDate: { lte: yearEnd },
+                endDate:   { gte: yearStart },
+              },
+              include: { zone: { include: { factory: true } } },
+            },
+          },
+        },
+      },
       orderBy: { totalAreaSqm: 'desc' },
       take: limit,
     });
@@ -249,7 +277,17 @@ router.get('/items', async (req, res, next) => {
       })),
     }));
 
-    res.json({ items: result, total: await prisma.projectItem.count() });
+    const total = await prisma.projectItem.count({
+      where: {
+        project: {
+          assignments: {
+            some: { status: 'confirmed', startDate: { lte: yearEnd }, endDate: { gte: yearStart } },
+          },
+        },
+      },
+    });
+    const grandTotalArea = result.reduce((s, i) => s + i.totalAreaSqm, 0);
+    res.json({ year, items: result, total, grandTotalArea });
   } catch (e) { next(e); }
 });
 
