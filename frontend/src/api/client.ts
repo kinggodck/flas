@@ -285,19 +285,11 @@ export const getDivisionDashboard = (year: number) =>
 // ── Dashboard: 아이템 ──────────────────────────────────
 export interface ItemRankEntry {
   rank: number;
-  id: number;
   itemName: string;
   itemCategory: string | null;
-  projectNo: string;
-  clientName: string | null;
-  businessDivision: string | null;
-  widthM: number;
-  heightM: number;
-  quantity: number;
-  marginRate: number;
-  unitAreaSqm: number;
   totalAreaSqm: number;
-  zones: { factoryName: string; zoneName: string; startDate: string; endDate: string }[];
+  projectCount: number;
+  projects: { projectNo: string; clientName: string | null; businessDivision: string | null; areaSqm: number }[];
 }
 
 export interface ItemDashboard {

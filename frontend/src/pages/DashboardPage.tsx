@@ -128,7 +128,6 @@ function ItemsTab({ year }: { year: number }) {
   if (!data || data.items.length === 0) return <p className="text-gray-400 text-center py-10">{year}년에 사용된 아이템이 없습니다.</p>;
 
   const maxArea = data.items[0]?.totalAreaSqm ?? 1;
-  const detail = detailItem !== null ? data.items.find(i => i.id === detailItem) : null;
 
   return (
     <div className="space-y-4">
@@ -175,57 +174,55 @@ function ItemsTab({ year }: { year: number }) {
             : `잔여 ${Math.round(data.totalAvailableArea - data.totalAssignedArea).toLocaleString()}㎡`}
         </p>
       </div>
-      <div className="flex justify-between items-center">
-        <h2 className="font-semibold text-gray-700 text-sm">{year}년 아이템별 사용 면적 랭킹 ({data.total}건)</h2>
-      </div>
+      {/* 아이템명 기준 집계 테이블 */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+          <h2 className="font-semibold text-gray-700 text-sm">{year}년 아이템 종류별 사용 면적 합계 ({data.total}종)</h2>
+          <span className="text-sm font-bold text-blue-700">합계: {Math.round(data.grandTotalArea).toLocaleString()}㎡</span>
+        </div>
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500">
             <tr>
               <th className="px-4 py-2.5 text-center w-10">#</th>
               <th className="px-4 py-2.5 text-left">아이템명</th>
-              <th className="px-4 py-2.5 text-left">프로젝트</th>
-              <th className="px-4 py-2.5 text-left">사업부문</th>
-              <th className="px-4 py-2.5 text-right">규격 (m)</th>
-              <th className="px-4 py-2.5 text-right">수량</th>
-              <th className="px-4 py-2.5 text-right">단위면적</th>
-              <th className="px-4 py-2.5 text-right">총 점유면적</th>
-              <th className="px-4 py-2.5 w-32">비중</th>
+              <th className="px-4 py-2.5 text-center">프로젝트 수</th>
+              <th className="px-4 py-2.5 text-right">사용 면적 합계</th>
+              <th className="px-4 py-2.5 text-right">전체 비중</th>
+              <th className="px-4 py-2.5 w-36">비율 바</th>
             </tr>
           </thead>
           <tbody>
             {data.items.map(item => (
               <>
                 <tr
-                  key={item.id}
-                  className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${detailItem === item.id ? 'bg-blue-50' : ''}`}
-                  onClick={() => setDetailItem(detailItem === item.id ? null : item.id)}
+                  key={item.itemName}
+                  className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${detailItem === item.rank ? 'bg-blue-50' : ''}`}
+                  onClick={() => setDetailItem(detailItem === item.rank ? null : item.rank)}
                 >
                   <td className="px-4 py-2.5 text-center text-gray-400 font-mono text-xs">{item.rank}</td>
                   <td className="px-4 py-2.5 font-medium text-gray-800">
                     {item.itemName}
                     {item.itemCategory && <span className="ml-1.5 text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{item.itemCategory}</span>}
                   </td>
-                  <td className="px-4 py-2.5 text-gray-600">{item.projectNo}<br /><span className="text-xs text-gray-400">{item.clientName}</span></td>
-                  <td className="px-4 py-2.5"><span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">{item.businessDivision ?? '미분류'}</span></td>
-                  <td className="px-4 py-2.5 text-right text-gray-600 font-mono text-xs">{item.widthM} × {item.heightM}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-600">{item.quantity}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-600">{item.unitAreaSqm.toFixed(1)}㎡</td>
-                  <td className="px-4 py-2.5 text-right font-semibold text-gray-800">{Math.round(item.totalAreaSqm).toLocaleString()}㎡</td>
+                  <td className="px-4 py-2.5 text-center text-gray-500">{item.projectCount}건</td>
+                  <td className="px-4 py-2.5 text-right font-bold text-blue-700">{Math.round(item.totalAreaSqm).toLocaleString()}㎡</td>
+                  <td className="px-4 py-2.5 text-right text-gray-500 text-xs">
+                    {data.grandTotalArea > 0 ? ((item.totalAreaSqm / data.grandTotalArea) * 100).toFixed(1) : 0}%
+                  </td>
                   <td className="px-4 py-2.5">
                     <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
-                      <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(item.totalAreaSqm / maxArea) * 100}%` }} />
+                      <div className="h-full bg-blue-500 rounded-full" style={{ width: `${data.grandTotalArea > 0 ? (item.totalAreaSqm / maxArea) * 100 : 0}%` }} />
                     </div>
                   </td>
                 </tr>
-                {detail && detail.id === item.id && detail.zones.length > 0 && (
-                  <tr key={`detail-${item.id}`} className="bg-blue-50/50">
-                    <td colSpan={9} className="px-8 py-2">
-                      <div className="flex gap-4 flex-wrap text-xs text-gray-600">
-                        <span className="font-medium text-blue-700">배치 현황:</span>
-                        {detail.zones.map((z, i) => (
+                {detailItem === item.rank && item.projects.length > 0 && (
+                  <tr key={`detail-${item.rank}`} className="bg-blue-50/50">
+                    <td colSpan={6} className="px-8 py-2">
+                      <div className="flex gap-2 flex-wrap text-xs text-gray-600">
+                        <span className="font-medium text-blue-700 self-center">포함 프로젝트:</span>
+                        {item.projects.map((p, i) => (
                           <span key={i} className="bg-white border border-blue-200 px-2 py-0.5 rounded">
-                            {z.factoryName} / {z.zoneName} ({z.startDate} ~ {z.endDate})
+                            {p.projectNo}{p.clientName ? ` (${p.clientName})` : ''} — {Math.round(p.areaSqm).toLocaleString()}㎡
                           </span>
                         ))}
                       </div>
@@ -235,6 +232,14 @@ function ItemsTab({ year }: { year: number }) {
               </>
             ))}
           </tbody>
+          <tfoot className="bg-gray-50 border-t-2 border-gray-200">
+            <tr>
+              <td colSpan={3} className="px-4 py-2.5 text-sm font-semibold text-gray-700">합계</td>
+              <td className="px-4 py-2.5 text-right text-sm font-bold text-blue-700">{Math.round(data.grandTotalArea).toLocaleString()}㎡</td>
+              <td className="px-4 py-2.5 text-right text-xs text-gray-500">100%</td>
+              <td />
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>

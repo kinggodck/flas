@@ -223,61 +223,8 @@ router.get('/items', async (req, res, next) => {
       `DELETE FROM "ProjectItem" WHERE "projectId" NOT IN (SELECT id FROM "Project")`
     ).catch(() => { /* 테이블 없거나 이미 정리됨 — 무시 */ });
 
-    // 해당 연도에 배치(AreaAssignment)가 있는 프로젝트의 아이템만 조회
+    // 해당 연도에 배치가 있는 모든 ProjectItem 조회
     const items = await prisma.projectItem.findMany({
-      where: {
-        project: {
-          assignments: {
-            some: {
-              status: 'confirmed',
-              startDate: { lte: yearEnd },
-              endDate:   { gte: yearStart },
-            },
-          },
-        },
-      },
-      include: {
-        project: {
-          include: {
-            assignments: {
-              where: {
-                status: 'confirmed',
-                startDate: { lte: yearEnd },
-                endDate:   { gte: yearStart },
-              },
-              include: { zone: { include: { factory: true } } },
-            },
-          },
-        },
-      },
-      orderBy: { totalAreaSqm: 'desc' },
-      take: limit,
-    });
-
-    const result = items.filter(item => item.project != null).map((item, idx) => ({
-      rank: idx + 1,
-      id: item.id,
-      itemName: item.itemName,
-      itemCategory: item.itemCategory,
-      projectNo: item.project!.projectNo,
-      clientName: item.project!.clientName,
-      businessDivision: item.project!.businessDivision,
-      widthM: Number(item.widthM),
-      heightM: Number(item.heightM),
-      quantity: item.quantity,
-      marginRate: Number(item.marginRate),
-      unitAreaSqm: Number(item.unitAreaSqm),
-      totalAreaSqm: Number(item.totalAreaSqm),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      zones: (item.project!.assignments as any[]).map((a) => ({
-        factoryName: a.zone.factory.name,
-        zoneName: a.zone.name,
-        startDate: a.startDate.toISOString().slice(0, 10),
-        endDate: a.endDate.toISOString().slice(0, 10),
-      })),
-    }));
-
-    const total = await prisma.projectItem.count({
       where: {
         project: {
           assignments: {
@@ -285,7 +232,51 @@ router.get('/items', async (req, res, next) => {
           },
         },
       },
+      include: {
+        project: {
+          include: {
+            assignments: {
+              where: { status: 'confirmed', startDate: { lte: yearEnd }, endDate: { gte: yearStart } },
+              include: { zone: { include: { factory: true } } },
+            },
+          },
+        },
+      },
     });
+
+    // 아이템명(itemName)으로 묶어서 면적 합산
+    const groupMap = new Map<string, {
+      itemName: string;
+      itemCategory: string | null;
+      totalAreaSqm: number;
+      projectCount: number;
+      projects: { projectNo: string; clientName: string | null; businessDivision: string | null; areaSqm: number }[];
+    }>();
+
+    for (const item of items) {
+      if (!item.project) continue;
+      const key = item.itemName;
+      const area = Number(item.totalAreaSqm);
+      if (!groupMap.has(key)) {
+        groupMap.set(key, { itemName: key, itemCategory: item.itemCategory, totalAreaSqm: 0, projectCount: 0, projects: [] });
+      }
+      const entry = groupMap.get(key)!;
+      entry.totalAreaSqm += area;
+      entry.projectCount++;
+      entry.projects.push({
+        projectNo: item.project.projectNo,
+        clientName: item.project.clientName,
+        businessDivision: item.project.businessDivision,
+        areaSqm: area,
+      });
+    }
+
+    const result = [...groupMap.values()]
+      .sort((a, b) => b.totalAreaSqm - a.totalAreaSqm)
+      .slice(0, limit)
+      .map((g, idx) => ({ rank: idx + 1, ...g }));
+
+    const total = groupMap.size;
 
     // 전체 공장 가용 면적 합계 (모든 활성 구역)
     const allZones = await prisma.zone.findMany({ where: { isActive: true }, select: { availableAreaSqm: true } });
